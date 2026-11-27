@@ -1,451 +1,360 @@
-# Loom · AI 页面工坊
+# PromptForge · AI 应用生成工作台
 
-用一句自然语言生成可交互的单文件 HTML 页面和配套后端代码。Django 4.2 + PostgreSQL + 原生 HTML/CSS/JS，适配 Render 与阿里云 ECS 部署。
+基于 Django 4.2 的 AI 应用生成工作台。用户输入需求或点击模板后进入独立生成工作台，实时查看生成阶段和模型处理进度；生成完成后可预览、查看源码、在线修改。所有新项目默认生成完整的前后端网站应用（默认 Django），也支持用户在需求中指定后端语言和框架，并附带可独立部署的 DEPLOY.md。
 
-## 功能
+- **生成前选择模型模式**：点击「开始生成」或模板后弹出模式选择框，可用历史胜出率更高的单模型、另一个单模型，或 DeepSeek + 千问双模型赛马
+- **历史赛马统计与推荐**：弹窗汇总历史赛马项目双方胜场、胜率、平均分和逐项记录，并给胜出率更高的模型标记推荐；用户可接受推荐或改选
+- **后台生成任务**：离开工作台返回项目主页后生成继续执行，主页实时显示任务进度和完成状态
+- **在线修改使用优胜模型**：DeepSeek 方案显示 DP 机器人，千问方案显示 QW 机器人
+- **在线修改后台执行**：提交后离开工作台也会继续，主页任务栏显示“修改「项目名」vN”，完成后自动生成新版本并刷新项目列表
+- **组件点选/框选修改**：可以点击单个组件，也可以按住拖拽框选多个组件；助手列出选区中的所有组件，并询问是否只修改这些组件。选区出现后两个范围按钮会高亮闪烁，提醒先做选择；选“否”时不限制选区，按自然语言指令针对性修改
+- **完整 Django 项目生成**：所有新需求都生成前后端分层、按功能模块组织目录的完整网站项目；默认 Django，用户指定后端语言/框架时优先采用
+- **发布**：每个版本可部署到当前域名的独立路由 `/p/<slug>/`（全栈项目发布的是静态预览）
+- **兜底**：任一模型 Key 为空或调用失败时使用内置加法计算器，接口不崩溃
 
-- 自然语言生成完整单文件 HTML，并生成配套后端代码；自动识别用户指定的后端语言，未指定时默认 Java。
-- 普通模式完全遵循用户原始提示词，不附加任何风格限制；只有勾选赛马模式时才应用“庄重内敛 / 活泼艳丽”两种风格。
-- 五阶段动态进度：需求规划 → 生成中 → 测试 → 验收 → 完成；成功后进度栏自动收起。
-- 预览 / 源码切换；HTML 与后端代码均可查看。
-- 生成记录写入 `GenerateHistory`，刷新页面不丢失，点击历史记录可重新打开。
-- 历史记录支持删除和下载 ZIP 代码包（`index.html` + 对应语言的后端源码）；生成过程中也可以继续删除或下载历史记录。
-- 赛马模式：庄重内敛与活泼艳丽两种风格并行生成、左右对比，选择后只保留所选方案并入库。
-- 点选修改：在预览中点选元素，输入自然语言建议，在线重写 HTML 并刷新预览。
-- 无 `LLM_API_KEY`、接口超时或异常时自动返回可交互的加法计算器 Mock，记录照常入库。
-- iframe 使用 `sandbox="allow-scripts"`，生成代码不能访问主页面数据。
+## 项目文档
+
+- [说明文档](docs/说明文档.md)：项目定位、架构、功能、数据模型、发布现状、与 Atoms.dev 的对比、正式发布方案和已知限制
+- [测试文档](docs/测试文档.md)：测试范围、环境、策略、用例、缺陷回归和未覆盖项
+- [验收清单](docs/验收清单.md)：演示版验收项和生产版 Gap
+
+## 页面与流程
+
+### 1. 项目主页 `/`
+
+- 顶部保留需求输入框和「开始生成」；提交需求（或点击模板）后弹出历史赛马统计和模式选择，必须确认单模型或双模型赛马后才进入生成工作台，关闭弹窗则取消本次提交
+- 下方分左右两栏：
+  - 左侧：我的项目列表默认只展示项目级信息；点击项目标题直接打开最新版本预览，点击右侧箭头才展开缩进的版本列表；项目较多时列表独立滚动、卡片不会被压缩，展开后会自动滚动到该项目，确保版本行和下载/发布/删除操作完整可见；已有版本发布的项目卡片使用绿色背景，未发布项目保持白色
+  - 右侧：五个带界面缩略图的模板，点击即直接开始生成
+- 模板：2048 游戏、扫雷游戏、番茄钟、待办清单、个人作品集
+- 项目版本操作：
+  - 打开：进入工作台预览指定版本
+  - 下载：新项目下载完整 ZIP（含前后端源码、依赖清单、部署文档和静态预览）；旧版单文件项目下载 HTML
+  - 删除：删除版本；最后一个版本删除后项目一并删除
+  - 发布：在当前域名生成独立访问路由
+  - 取消发布：立即下线已发布页面
+- 所有项目和发布状态均持久化数据库
+
+### 2. 生成工作台 `/workspace/`
+
+- 左侧实时生成进度：
+  - 当前阶段列表（解析需求、模型生成、质量评审、保存项目）
+  - 实时进度条和状态
+  - DeepSeek / 千问模型状态
+  - “模型生成”阶段会显示每个模型当前的内部处理阶段（结构规划、样式编写、交互实现、自检收尾）和已生成字符数，不展示原始代码流
+- 右侧生成结果：
+  - 预览 / 查看源码切换；源码区左侧展示完整目录树，点击文件在右侧显示内容
+  - 在线修改：点击后在左侧打开 AI 助手对话面板，不遮挡右侧预览
+  - 助手名称跟随项目优胜模型：DeepSeek 为 DP 机器人，千问为 QW 机器人
+  - 组件点选/框选：在线修改开启后，可点击单个组件，或按住拖拽框选多个组件；助手会展示选区中的所有组件，并询问是否只修改选区组件。选“否”时不限制修改范围，按语言指令执行
+  - 修改在后台任务中执行：提交后可以立即返回项目主页，主页「生成任务」会显示“修改「项目名」vN”，任务继续执行并自动生成新版本；点击任务可回到工作台查看实时修改进度
+  - 修改结果以新版本链接返回，所有修改会话按版本历史保留；点击任意版本链接立即切换预览
+  - 版本下拉切换
+  - 已发布版本显示访问链接
+  - 双模型赛马时展示评分结果和十维评分详情
+- 生成完成后 URL 自动更新为 `/workspace/?history=<id>&version=<id>`；修改进行中会额外带有 `refineJob=<uuid>`，刷新或从主页任务回到工作台可恢复进度显示
 
 ## 项目结构
 
 ```text
 .
 ├── manage.py
-├── prompt_studio/
+├── requirements.txt
+├── .env.example
+├── .gitignore
+├── README.md
+├── DEPLOY_ALIYUN_ECS.md
+├── docs/
+│   ├── 说明文档.md
+│   ├── 测试文档.md
+│   └── 验收清单.md
+├── webgen/
 │   ├── settings.py
 │   ├── urls.py
 │   ├── wsgi.py
 │   └── asgi.py
-├── generator/
-│   ├── migrations/0001_initial.py
-│   ├── models.py
-│   ├── views.py
-│   ├── urls.py
-│   ├── services.py              # DeepSeek、Mock 兜底、语言识别
-│   └── templates/index.html
-├── requirements.txt
-├── .env.example
-├── .gitignore
-└── render.yaml
+└── generator/
+    ├── models.py                 # GenerateHistory / GenerateVersion / PublishedPage / GenerationJob
+    ├── views.py                  # 页面、后台任务、解析、版本操作、发布路由
+    ├── scoring.py                # 100 分制十维网页质量评分引擎
+    ├── tests.py                  # 评分/解析/任务/统计回归测试
+    ├── urls.py
+    ├── admin.py
+    ├── migrations/
+    │   ├── 0001_initial.py
+    │   ├── 0002_publishedpage.py
+    │   ├── 0003_generatehistory_backend_label_and_more.py
+    │   └── 0004_generationjob.py
+    └── templates/
+        └── index.html            # 主页 + 工作台（原生 HTML/CSS/JS）
 ```
 
 ## 本地运行
 
-建议使用 Python 3.10–3.12。
+### 1. 环境要求
 
-```bash
-cd /d/bishidemo
+- Python 3.10+
+- PostgreSQL 14+（本地演示可退回 SQLite）
 
-# 1. 创建虚拟环境（Git Bash / macOS / Linux）
+### 2. 安装依赖
+
+Windows PowerShell：
+
+```powershell
 python -m venv .venv
-# Windows 若提示 python 是 Microsoft Store 别名，改用：py -m venv .venv
-source .venv/Scripts/activate      # Windows Git Bash
-# source .venv/bin/activate        # macOS / Linux
-# .venv\Scripts\activate           # Windows CMD / PowerShell
-
-# 2. 安装依赖
-pip install -r requirements.txt
-
-# 3. 配置环境变量
-# .env 已存在时会直接读取；从模板重新开始可用：
-# cp .env.example .env
-# 然后填写 SECRET_KEY、LLM_API_KEY 等。.env 已被 .gitignore 忽略。
-
-# 4. 执行数据库迁移
-python manage.py migrate
-
-# 5. 启动
-python manage.py runserver 8010
+.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
 ```
 
-访问 <http://127.0.0.1:8010/>。若 8000 未被占用，也可直接运行 `python manage.py runserver` 并访问 <http://127.0.0.1:8000/>。
-
-没有本地 PostgreSQL 时，把 `.env` 中的 `DATABASE_URL` 留空或注释掉即可回退 SQLite；生产环境仍使用 PostgreSQL。
-
-生成 SECRET_KEY（可选）：
+Windows Git Bash / Linux / macOS：
 
 ```bash
-python -c "import secrets; print(secrets.token_urlsafe(50))"
+python3 -m venv .venv
+source .venv/bin/activate        # Git Bash: source .venv/Scripts/activate
+python -m pip install -r requirements.txt
 ```
 
-### 数据库说明
+### 3. 环境变量
 
-- 项目通过 `dj_database_url` 解析环境变量 `DATABASE_URL`。
-- 生产 / Render 使用 PostgreSQL：
-
-  ```env
-  DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/loom
-  ```
-
-- 未设置 `DATABASE_URL` 时回退 SQLite，便于无数据库环境快速验收；Render 会自动注入 Postgres 连接串。
-
-迁移相关命令：
+不存在 `.env` 时复制模板：
 
 ```bash
-python manage.py migrate
-python manage.py showmigrations generator
-# 如修改了 models.py：
-python manage.py makemigrations generator
-python manage.py migrate
+cp .env.example .env
 ```
 
-## Mock 模式测试
+核心配置：
 
-Mock 是完整的演示兜底链路，不依赖外网。
+```dotenv
+DJANGO_SECRET_KEY=<长随机字符串>
+DJANGO_DEBUG=True
+ALLOWED_HOSTS=127.0.0.1,localhost
+CSRF_TRUSTED_ORIGINS=
 
-### 方式一：不配置密钥
-
-将 `.env` 中的 `LLM_API_KEY` 留空：
-
-```env
-LLM_API_KEY=
-```
-
-或者在启动命令里覆盖为空：
-
-```bash
-LLM_API_KEY= python manage.py runserver 8010
-```
-
-随后：
-
-1. 打开首页，输入任意需求，点击「生成界面」。
-2. 应看到五阶段进度走完，并出现可交互的加法计算器。
-3. 刷新页面，右侧「生成记录」仍然保留，点击记录能重新打开预览。
-4. 勾选「赛马模式」再生成，会得到庄重内敛 / 活泼艳丽两份计算器，选择后只保存所选版本。
-5. Mock 模式不支持 AI 在线修改，点选修改会提示并保留原界面。
-
-验证数据库记录：
-
-```bash
-python manage.py shell -c "from generator.models import GenerateHistory; print(GenerateHistory.objects.count()); print(GenerateHistory.objects.first().prompt)"
-```
-
-### 方式二：模拟接口异常
-
-保留任意 `LLM_API_KEY`，把地址改成不可达服务，即可验证异常兜底：
-
-```bash
-LLM_BASE_URL=http://127.0.0.1:9 python manage.py runserver 8010
-```
-
-发起生成后会走 `requests` 异常分支，页面仍返回 Mock 加法计算器，记录仍正常入库。真实的 DeepSeek 接口超时时间固定为 30 秒。
-
-## 大模型配置
-
-DeepSeek 使用 OpenAI 兼容的 `POST /chat/completions` 接口：
-
-```env
-LLM_API_KEY=你的密钥
+LLM_API_KEY=<DeepSeek Key>
 LLM_BASE_URL=https://api.deepseek.com
 LLM_MODEL=deepseek-chat
-```
+LLM_TIMEOUT=30
 
-密钥只从环境变量读取，源码中没有硬编码。修改变量和 `.env` 后需要重启 `runserver`。
+QWEN_API_KEY=<千问 Token Plan Key>
+QWEN_BASE_URL=https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1
+QWEN_MODEL=qwen3.6-flash
+QWEN_TIMEOUT=60
+BACKEND_TIMEOUT=90
+QWEN_BACKEND_TIMEOUT=180
 
-固定前端 system prompt：
-
-```text
-你是前端工程师，只输出完整可独立运行的单文件HTML，里面JS可以交互，不要额外解释、不要markdown代码块标记。
-```
-
-后端代码使用独立的 system prompt 生成，以免破坏题设的前端固定提示词；用户提示词中出现 Python、Node.js、Go、PHP、C#、Ruby、Rust、Kotlin、Java 等后端语言时自动识别，否则默认 Java。
-
-## 实现说明
-
-- 模型 `GenerateHistory` 包含题设要求的 `prompt`、`html_code`、`created_at`；额外增加 `backend_language`、`backend_code`，用于源码面板展示和修改后持久化。
-- 普通模式不拼接赛马风格提示词，原始需求会原样发送给模型；无 Key 或接口异常时使用不带风格标签的中性 Mock。
-- 赛马模式以“庄重内敛 / 活泼艳丽”为两个独立的用户提示词并行生成候选，不立即入库；庄重内敛强调正式、沉稳且有成体系的色彩（如藏蓝、酒红、墨绿搭配米白和金色点缀），不是黑白灰风格。用户点选后调用 `/api/select/` 保存所选版本，因此刷新后历史只出现被保留的方案。
-- 点选修改通过注入到预览 iframe 的桥接脚本，用 `postMessage` 与父页面通信；iframe 仍只有 `allow-scripts`，不开启 `allow-same-origin`。
-- 沙箱会禁止访问真实 `localStorage`。预览在生成脚本执行前注入内存版 `localStorage` / `sessionStorage` 兼容层，避免依赖本地存储的页面因 `SecurityError` 整体失效；下载后的页面仍使用浏览器原生存储。
-- 修改接口失败时不会破坏当前预览，界面保留原 HTML，并给出提示。
-- 大模型请求 30 秒超时；超时、网络错误、非 OpenAI 格式响应、空内容、非完整 HTML 都会触发 Mock 兜底。
-- 历史记录删除使用 POST + CSRF；下载接口按后端语言生成 `backend.py`、`backend.java` 等文件，与 `index.html` 一起打包为 ZIP。
-
-## API 摘要
-
-| 方法 | 路径 | 用途 |
-| --- | --- | --- |
-| POST | `/api/generate/` | 普通生成或赛马生成，入参 `{ prompt, race_mode }` |
-| POST | `/api/select/` | 保存赛马模式选中的方案 |
-| POST | `/api/revise/` | 按点选元素和自然语言建议修改 HTML |
-| POST | `/api/history/<id>/delete/` | 删除一条生成记录 |
-| GET | `/api/history/<id>/download/` | 下载 HTML + 后端代码 ZIP 包 |
-
-页面提交使用 Django CSRF Token。
-
-## 阿里云 ECS 部署（公网 IP 直连）
-
-本项目只需要一台 ECS，不使用 Nginx、反向代理或负载均衡。直接由 Gunicorn 监听 `0.0.0.0:8000`，通过 `http://ECS公网IP:8000` 访问。
-
-以下以 **Ubuntu 22.04 / 24.04 LTS** 为例。若选择 Alibaba Cloud Linux 3，可将 `apt` 换成 `dnf`，并确认系统 Python 版本为 3.10–3.12。
-
-> 注意：这种方式会把生成接口直接暴露在公网。项目没有登录和限流，公网可访问时任何人都可以消耗你的 DeepSeek 额度。个人演示可在安全组中只放行自己的公网 IP；长期公开使用建议后续增加 Nginx、HTTPS 和访问控制。
-
-### 1. ECS 安全组与系统准备
-
-在阿里云控制台配置实例安全组入方向规则：
-
-- `22`：仅允许你的公网 IP，用于 SSH
-- `8000`：允许你的公网 IP，或设置为 `0.0.0.0/0` 允许所有人访问
-- 不要对外开放 `5432`；PostgreSQL 只需本机访问
-
-登录 ECS 后安装依赖：
-
-```bash
-sudo apt update
-sudo apt install -y git python3 python3-venv python3-pip postgresql postgresql-contrib
-
-sudo systemctl enable --now postgresql
-python3 --version   # 建议 3.10–3.12
-```
-
-如果启用了 UFW，还需要放行 SSH 和应用端口：
-
-```bash
-sudo ufw allow OpenSSH
-sudo ufw allow 8000/tcp
-sudo ufw enable
-```
-
-### 2. 上传项目与安装依赖
-
-将项目放到 `/opt/loom`，使用 `www-data` 作为运行用户：
-
-```bash
-sudo mkdir -p /opt/loom
-sudo chown -R www-data:www-data /opt/loom
-
-# 方式一：服务器直接拉取 Git 仓库
-sudo -u www-data git clone <YOUR_REPO_URL> /opt/loom
-
-# 方式二：先在本地上传到服务器 /tmp/loom，再复制：
-# sudo cp -a /tmp/loom/. /opt/loom/
-# sudo chown -R www-data:www-data /opt/loom
-```
-
-创建虚拟环境并安装依赖：
-
-```bash
-sudo -u www-data python3 -m venv /opt/loom/.venv
-sudo -u www-data /opt/loom/.venv/bin/pip install --upgrade pip
-sudo -u www-data /opt/loom/.venv/bin/pip install -r /opt/loom/requirements.txt
-```
-
-### 3. 创建 PostgreSQL 数据库
-
-```bash
-sudo -u postgres psql
-```
-
-在 psql 中执行：
-
-```sql
-CREATE USER loom WITH PASSWORD '替换成强密码';
-CREATE DATABASE loom OWNER loom;
-\q
-```
-
-验证连接：
-
-```bash
-psql "postgresql://loom:替换成强密码@127.0.0.1:5432/loom" -c "SELECT 1;"
-```
-
-如果 ECS 使用阿里云 RDS PostgreSQL，可跳过本机安装和建库步骤，直接把 RDS 连接串填入 `DATABASE_URL`，并在 RDS 白名单中放行 ECS 内网 IP。
-
-> 数据库密码中如果包含 `@`、`:`、`/`、`#` 等字符，写入 `DATABASE_URL` 前需要做 URL 编码。
-
-### 4. 配置生产环境变量
-
-```bash
-sudo -u www-data cp /opt/loom/.env.example /opt/loom/.env
-sudo -u www-data nano /opt/loom/.env
-sudo chmod 600 /opt/loom/.env
-```
-
-生产 `.env` 示例（把 `47.0.0.1` 换成你的 ECS 公网 IP）：
-
-```env
-DEBUG=False
-SECRET_KEY=替换成长随机字符串
-ALLOWED_HOSTS=47.0.0.1,127.0.0.1,localhost
-CSRF_TRUSTED_ORIGINS=http://47.0.0.1:8000
-
-DATABASE_URL=postgresql://loom:替换成强密码@127.0.0.1:5432/loom
-
-LLM_API_KEY=你的DeepSeekKey
-LLM_BASE_URL=https://api.deepseek.com
-LLM_MODEL=deepseek-chat
+# PostgreSQL；本地可留空使用 SQLite
+DATABASE_URL=
 ```
 
 说明：
 
-- `ALLOWED_HOSTS` 必须包含 ECS 公网 IP 和 `127.0.0.1`。
-- `CSRF_TRUSTED_ORIGINS` 使用 `http://公网IP:8000` 格式；如果之后绑定域名，再追加对应域名。
-- `.env` 权限设为 `600`，不要提交到 Git，也不要把密钥写入 systemd 配置。
-- 生成 Django 密钥：
+- 千问 `sk-sp-` 开头的 Token Plan Key 必须搭配 `token-plan.maas.qianwenaiapi.com` 兼容端点
+- 标准 DashScope Key 应使用 `https://dashscope.aliyuncs.com/compatible-mode/v1`，同时把 `QWEN_MODEL` 改为对应模型
+- 千问复杂页面生成耗时可能超过 30 秒，因此单独设置 60 秒超时
+- 全栈项目代码量较大，DeepSeek 后端项目生成使用 `BACKEND_TIMEOUT=90`
+- 千问生成完整项目明显更慢，使用独立的 `QWEN_BACKEND_TIMEOUT=180`；后台任务不会因 90 秒读超时误判为结构不完整
+- `.env` 已被 `.gitignore` 忽略，禁止提交真实 Key
 
-  ```bash
-  python3 -c "import secrets; print(secrets.token_urlsafe(50))"
-  ```
-
-### 5. 执行数据库迁移
+### 4. 数据库与迁移
 
 ```bash
-sudo -u www-data /opt/loom/.venv/bin/python /opt/loom/manage.py migrate
-sudo -u www-data /opt/loom/.venv/bin/python /opt/loom/manage.py check
+python manage.py migrate
 ```
 
-本项目的页面样式和脚本全部内联在模板中，不需要配置静态文件服务，也不需要 Nginx。
+PostgreSQL 示例：
 
-### 6. 配置 Gunicorn systemd 服务
+```dotenv
+DATABASE_URL=postgresql://webgen:change-me@127.0.0.1:5432/webgen
+```
 
-创建 `/etc/systemd/system/loom.service`：
+`DJANGO_DEBUG=False` 时必须配置 PostgreSQL 的 `DATABASE_URL`；调试模式下未配置则使用项目根目录的 SQLite。
+
+### 5. 启动
 
 ```bash
-sudo tee /etc/systemd/system/loom.service >/dev/null <<'EOF'
-[Unit]
-Description=Loom AI Page Studio
-After=network.target postgresql.service
-
-[Service]
-Type=simple
-User=www-data
-Group=www-data
-WorkingDirectory=/opt/loom
-Environment=PYTHONUNBUFFERED=1
-ExecStart=/opt/loom/.venv/bin/gunicorn prompt_studio.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 90 --access-logfile - --error-logfile -
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
+python manage.py runserver
 ```
 
-启动并设置开机自启：
+访问 <http://127.0.0.1:8000/>。
+
+## Mock 兜底测试
+
+后台生成由 `GenerationJob` + `_run_generation_job()` 执行；对应模型 Key 为空、超时、接口报错或返回内容无法解析时，会自动返回内置可交互加法计算器。修改接口使用 `_call_model()`。
+
+### 正常链路
+
+1. 输入需求 → 自动跳转 `/workspace/`，后台任务立即开始
+2. 左侧通过轮询显示阶段、进度和模型处理阶段；此时可以返回项目主页，任务仍继续
+3. 主页「生成任务」面板实时显示进行中和失败的任务，并支持删除；删除运行中任务会立即停止后台生成并清理任务数据，已完成任务会自动从任务栏移除并刷新项目列表
+4. 完成后右侧显示预览，可切换源码；点击「在线修改」在左侧与优胜模型对应的助手对话，点击或框选预览中的组件后，助手会询问是否限制在该选区
+
+### 测试一：全部 Mock
+
+将 `.env` 中两个 Key 清空并重启服务：
+
+```dotenv
+LLM_API_KEY=
+QWEN_API_KEY=
+```
+
+- 顶部状态显示 `Mock 模式 · 未配置模型 Key`
+- 生成工作台仍会走完整阶段，最终显示 Mock 加法计算器
+- 项目正常以完整 Mock Django 项目入库，可下载 ZIP、发布静态预览、删除
+
+### 测试二：单模型失败
+
+只清空 `QWEN_API_KEY` 并在模式选择框中选择「双模型赛马」：
+
+- 千问显示“调用失败，未参与评分”，评分 0 分
+- 系统自动选用 DeepSeek 的真实结果
+- 项目备注包含「千问调用失败」（双方都失败时才是「双方均调用失败，Mock 兜底」）
+
+两个 Key 都清空时，赛马仍会展示双方 Mock 结果并正常保存。全栈模型输出失败时也会生成一套完整的 Mock Django 计算器项目（含 DEPLOY.md）作为兜底。
+
+### 验证数据库
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now loom
-sudo systemctl status loom --no-pager
+python manage.py shell -c "from generator.models import GenerateHistory, GenerateVersion, PublishedPage; print(GenerateHistory.objects.count(), GenerateVersion.objects.count(), PublishedPage.objects.count())"
 ```
 
-本机验证：
+### 恢复真实调用
 
-```bash
-curl -I http://127.0.0.1:8000/
-```
+把有效 Key 写回 `.env`，重启 `runserver`。修改 `.env` 后必须重启进程。
 
-`--timeout 90` 必须大于大模型接口的 30 秒超时，避免赛马模式并行请求时被 Gunicorn 提前杀掉。项目会通过 `python-dotenv` 读取 `/opt/loom/.env`。
+## 数据模型
 
-### 7. 通过公网 IP 访问
+### GenerateHistory
 
-确认安全组已放行 `8000` 后，浏览器访问：
+| 字段 | 说明 |
+| --- | --- |
+| `prompt` | 用户提示词 / 模板提示词 |
+| `html_code` | 当前选中版本的 HTML / 静态预览 |
+| `model_provider` | 项目使用模型：`deepseek` / `qwen`，后续在线修改沿用此模型 |
+| `project_type` | `frontend` 或 `backend` |
+| `backend_label` | 生成的后端技术栈 |
+| `created_at` | 项目创建时间 |
+
+### GenerateVersion
+
+| 字段 | 说明 |
+| --- | --- |
+| `history` | 所属项目 |
+| `version_no` | 从 1 递增的版本号 |
+| `html_code` | 该版本 HTML 快照 |
+| `note` | 初始生成 / 赛马评分结果 / 修改建议 |
+| `files` | 完整项目源码文件列表（路径、内容，含 DEPLOY.md） |
+| `created_at` | 版本创建时间 |
+
+### GenerationJob
+
+| 字段 | 说明 |
+| --- | --- |
+| `id` | UUID 任务 ID |
+| `client_id` | 浏览器标识，用于隔离不同浏览器/用户的任务状态 |
+| `prompt` / `requested_mode` | 用户提示词和请求模式 |
+| `status` / `progress` | queued / running / completed / failed 和进度 |
+| `state` | 阶段、模型状态、评分结果等实时快照 |
+| `history` | 生成任务完成后关联新项目；修改任务完成后关联目标项目 |
+| `error` | 失败信息 |
+
+修改任务还会在 `state` 中保存：
+
+| 字段 | 说明 |
+| --- | --- |
+| `kind` | `generate` / `refine` |
+| `target_history_id` | 被修改的项目 ID |
+| `target_version_id` / `target_version_no` | 被修改的版本 |
+| `target_project_prompt` | 项目需求，用于主页任务栏标题 |
+| `instruction` | 本次修改指令 |
+| `target_context` / `target_label` | 点选/框选组件上下文 |
+
+### PublishedPage
+
+| 字段 | 说明 |
+| --- | --- |
+| `version` | 被发布版本，一对一 |
+| `slug` | 随机访问标识 |
+| `created_at` | 发布时间 |
+
+## API
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| GET | `/` | 项目主页 |
+| GET | `/workspace/` | 生成 / 项目预览工作台 |
+| GET | `/api/history/` | 项目与版本列表（不含 HTML） |
+| GET | `/api/history/<id>/` | 项目详情（含 HTML） |
+| POST | `/api/jobs/start/` | 创建后台生成任务，立即返回任务 ID；单模型可传 `provider=deepseek/qwen` 指定模型 |
+| GET | `/api/race/stats/` | 历史赛马胜场、胜率、平均分、逐项记录与单模型推荐 |
+| GET | `/api/jobs/?client_id=<id>` | 当前浏览器的最近生成任务 |
+| GET | `/api/jobs/<uuid>/` | 任务进度、状态与完成后的项目详情 |
+| POST | `/api/jobs/<uuid>/delete/` | 删除任务；运行中任务会停止后台生成并清理数据 |
+| POST | `/api/generate/stream/` | 兼容保留的 NDJSON 即时生成接口 |
+| POST | `/api/history/<id>/refine/` | 基于指定版本修改；传 `background: true` 创建后台修改任务并返回 202 任务 ID，否则同步返回新版本；支持 `target_context` / `target_label` |
+| GET | `/api/history/<id>/versions/<vid>/download/` | 下载 HTML 或全栈项目 ZIP |
+| POST | `/api/history/<id>/versions/<vid>/delete/` | 删除版本 |
+| POST | `/api/history/<id>/versions/<vid>/publish/` | 发布版本 |
+| POST | `/api/history/<id>/versions/<vid>/unpublish/` | 取消发布 |
+| GET | `/p/<slug>/` | 已发布页面 |
+
+### 全栈项目解析与完整性校验
+
+- 模型文件包同时兼容严格的 `===FILE: path=== ... ===END_FILE===` 和简化的 `===FILE: path===` 分隔格式；即使模型漏掉部分 `===END_FILE===` 或 `===FILES===` 标记，也会按下一个文件/预览标记正确拆分，避免把整个项目误塞进 `requirements.txt`
+- 保存前校验项目至少包含 6 个文件，并同时具备依赖清单、后端入口/目录和前端模板/静态资源；不满足时不会当成完整项目保存
+- 单模型模式遇到不完整包会使用完整的 Mock Django 项目兜底；赛马模式会优先在“结构完整”的候选方案中按预览评分选优，不会让只有两三个文件的高分预览胜出
+- 空的 `__init__.py` 等文件也会保留，下载 ZIP 和源码树不会再缺少后端模块
+
+### 双模型赛马评分
+
+- 两个模型使用同一份用户提示词和同一套确定性规则评分，评分代码不接收模型名，不存在 DeepSeek/千问权重差异
+- 十维 100 分制：页面结构与完整性 10、需求覆盖 15、交互能力 15、状态管理与持久化 10、视觉设计 10、响应式适配 10、可访问性 10、内容质量 8、代码与安全 7、性能与资源 5
+- “需求覆盖”会将提示词中的 2048、计算器、待办、扫雷、作品集、番茄钟等需求映射为具体功能检查；未知需求则检查控件、逻辑、内容、状态和关键词呼应
+- 评分检查项、双方得分和失分原因都可在「评分详情」中展开查看；同分时综合比较需求覆盖、交互能力、状态管理和内容质量
+- 历史赛马统计读取所有已完成的赛马任务（包括项目后来被删除的任务），因此能看到双方完整胜负记录，而不是只看当前仍存在的项目
+
+### 后台任务与并发
+
+- 每个生成任务使用独立 UUID、独立线程和独立 `GenerationJob` 记录，多个浏览器可以同时生成
+- 在线修改同样使用 `GenerationJob`：`state.kind = "refine"`，记录目标项目、目标版本号、修改指令和点选上下文；修改任务不会把目标项目当作“生成结果”覆盖
+- 工作台和主页都通过轮询 `/api/jobs/<uuid>/` / `/api/jobs/?client_id=...` 获取状态；离开页面不会中止后台线程
+- 主页「生成任务」中的修改任务显示为“修改「项目名」vN”；完成后自动刷新项目列表并出现新版本。删除运行中的修改任务只会停止修改，不会删除项目已有版本
+- 修改任务完成后 `job.history` 关联目标项目，任务详情接口会返回含新版本的完整项目，便于工作台恢复
+- 任务状态持久化到数据库；主页「生成任务」面板只展示进行中和失败的任务，已完成任务会自动移除并更新项目列表
+- 进行中和失败任务卡片均提供「删除」按钮：删除运行中任务会先确认，前端立即移除卡片，后端设置取消事件并异步关闭模型 HTTP 响应，工作线程在下次状态写入时退出，不会再创建项目或“复活”任务行；失败任务会直接删除任务记录。删除请求不等待套接字关闭，因此一次点击即可完成
+- 任务保存使用 `QuerySet.update()` 并检查受影响行数，任务行被删除后旧线程无法重新插入数据
+- 本地 SQLite 已增加 20 秒写锁等待时间；生产环境推荐 PostgreSQL，可避免多任务写入争用
+- 生产部署建议保持多个 Gunicorn worker，并让数据库连接池承担并发
+
+### 兼容的流式事件（可选）
+
+`/api/generate/stream/` 返回 `application/x-ndjson`，主要用于外部调试；当前页面使用后台任务轮询：
 
 ```text
-http://ECS公网IP:8000
+{"type":"start","mode":"single|race|backend","providers":[...]}
+{"type":"stage","key":"prepare|generate|score|backend|files|save|fallback","progress":18,...}
+{"type":"provider","provider":"deepseek","status":"connecting|streaming|done|fallback",...}
+{"type":"delta","provider":"deepseek","chars":80}
+{"type":"progress","progress":45,"chars":12000}
+{"type":"heartbeat","elapsed":10}
+{"type":"done","history":{...},...}
+{"type":"error","message":"..."}
 ```
 
-例如：`http://47.0.0.1:8000`
+## 发布与安全
 
-如果访问失败，依次检查：
+- 发布会生成 `/p/<随机slug>/` 路由，返回当前版本完整 HTML
+- 已发布页面带 CSP `sandbox` 响应头，脚本可以运行，但生成页面无法读取主站 Cookie / localStorage
+- 取消发布会立即删除路由；删除版本也会级联删除其发布记录，原 URL 返回 404
+- 下载接口对完整项目返回 ZIP，包含全部前后端文件、依赖清单、`DEPLOY.md` 与静态预览；旧版单文件项目仍返回 HTML
+- 生成预览 iframe 使用 `sandbox="allow-scripts"`
+- 如果生成结果确实使用 React JSX，后端会自动注入 Babel Standalone 并把内联脚本转换为 `text/babel`，避免“预览空白”；普通 DOM 脚本（即使包含 `createElement` 和 HTML 模板字符串）不会被误判为 JSX。历史上被误转换的预览会在读取时自动还原，避免 Babel 延迟执行导致 `DOMContentLoaded` 处理器和入场动画不运行
+- 预览通过 iframe 加载时，`DOMContentLoaded` 处理器必须正常注册；如果页面使用 `.fade-in { opacity: 0 }` 等入场动画，动画脚本未执行会让内容整体不可见，相关 JSX 误判问题已修复
+- 预览 iframe 和临时发布页处于沙箱化 opaque origin，`localStorage` 会抛出 `SecurityError`；系统会自动注入存储兜底，保证依赖本地存储的页面仍能正常初始化与交互
+- 已发布页面的存储兜底会把 `localStorage` / `sessionStorage` 镜像到 URL 的 `__pf_store` 查询参数（通过 `history.replaceState`），因此刷新、前进后退或收藏后可以恢复最高分等游戏状态；不授予同源权限，也不会读写主站 Cookie / localStorage。状态上限约 32KB，超出后仅保留当前页面内存状态
+- 生成页面只有在自身把状态写入 `localStorage` / `sessionStorage` 时才能被恢复；如果游戏代码没有保存棋盘等中间状态，刷新后仍会按代码逻辑重新开始
+- 所有新生成项目默认使用 Django 4.2，并按前后端 / 业务模块划分目录；用户指定的后端语言或框架优先。生成的 `DEPLOY.md` 说明如何独立安装、配置数据库和启动服务
+- 发布时仅将生成的静态 `PREVIEW_HTML` 部署为当前域名的临时路由；不会执行生成的后端代码。完整前后端项目请下载 ZIP 后按包内 `DEPLOY.md` 独立部署。取消发布会立即下线路由
 
-```bash
-sudo systemctl status loom --no-pager
-sudo journalctl -u loom -n 100 --no-pager
-sudo ss -lntp | grep 8000
-```
+## 阿里云 ECS 部署
 
-并确认阿里云安全组和 UFW 都放行了 TCP 8000。
-
-> 这是便于个人演示的 HTTP 直连方案。如果需要使用 80/443 标准端口、域名或 HTTPS，再额外配置 Nginx 反向代理即可，当前项目不需要改动代码。
-
-### 8. 更新版本与日志
-
-拉取代码并更新依赖、迁移数据库：
-
-```bash
-sudo -u www-data git -C /opt/loom pull
-sudo -u www-data /opt/loom/.venv/bin/pip install -r /opt/loom/requirements.txt
-sudo -u www-data /opt/loom/.venv/bin/python /opt/loom/manage.py migrate
-sudo systemctl restart loom
-```
-
-查看实时日志：
-
-```bash
-sudo journalctl -u loom -f
-```
-
-常见问题：
-
-| 现象 | 排查方向 |
-| --- | --- |
-| 浏览器无法连接 | 检查安全组、UFW 是否放行 8000，以及 Gunicorn 是否监听 `0.0.0.0:8000` |
-| 400 DisallowedHost | `ALLOWED_HOSTS` 未包含 ECS 公网 IP |
-| CSRF 403 | 检查 `CSRF_TRUSTED_ORIGINS` 是否为 `http://公网IP:8000`，并刷新页面 |
-| 页面能打开但 API 报错 | 执行 `journalctl -u loom -n 100` 查看日志，并检查数据库连接 |
-| 生成请求超时 | 确认 Gunicorn 启动参数包含 `--timeout 90` |
-| 数据库连接失败 | 检查 PostgreSQL 是否启动、`DATABASE_URL` 密码是否需要 URL 编码，以及 RDS 白名单 |
-
-## Render 部署
-
-### 方式一：Blueprint（推荐）
-
-仓库已附带 `render.yaml`。在 Render 中选择 **New → Blueprint**，连接仓库后会自动创建：
-
-- Web Service：`loom-ai-page-studio`
-- PostgreSQL：`loom-postgres`
-
-部署时按提示填写 `LLM_API_KEY`（`sync: false` 的变量不会写进仓库）。其余变量由 Blueprint 配置或由 Render 自动生成。
-
-### 方式二：手动创建 Web Service
-
-- **Build Command**
-
-  ```bash
-  pip install -r requirements.txt && python manage.py collectstatic --noinput && python manage.py migrate
-  ```
-
-- **Start Command**
-
-  ```bash
-  gunicorn prompt_studio.wsgi:application --bind 0.0.0.0:$PORT --workers 2 --timeout 90
-  ```
-
-  `--timeout 90` 必须大于模型接口的 30 秒超时，避免 Gunicorn 在等待并行生成时杀掉 worker。
-
-- **Python 版本**：3.12.5（与 `render.yaml` 一致）。
-
-### Render 环境变量
-
-| 变量 | 是否必填 | 说明 |
-| --- | --- | --- |
-| `DATABASE_URL` | 必填 | Render PostgreSQL 的 Connection String；Blueprint 会自动关联 |
-| `SECRET_KEY` | 必填 | Django 密钥；Blueprint 会随机生成，手动部署请自行生成 |
-| `DEBUG` | 必填 | 生产设为 `False` |
-| `ALLOWED_HOSTS` | 必填 | 可填 `.onrender.com`；绑定自定义域名时追加域名 |
-| `LLM_API_KEY` | 建议填写 | DeepSeek API Key；留空仍可运行 Mock 模式 |
-| `LLM_BASE_URL` | 可选 | 默认 `https://api.deepseek.com` |
-| `LLM_MODEL` | 可选 | 默认 `deepseek-chat` |
-| `CSRF_TRUSTED_ORIGINS` | 可选 | 自定义域名时填 `https://你的域名`；Render 内置域名会自动处理 |
-| `PYTHON_VERSION` | 可选 | 建议 `3.12.5` |
-
-部署后首次访问前，确认迁移已在 Build Command 中成功执行，并检查 `/api/generate/` 是否可正常返回。
-
-## 安全提醒
-
-- `.env`、数据库文件和虚拟环境都已加入 `.gitignore`。
-- 如果曾把真实 API Key 写进聊天、日志或公开仓库，建议立即在 DeepSeek 控制台轮换。
-- 生成的 HTML 来自大模型，仅在 `sandbox="allow-scripts"` 中运行；不要把它当作可信代码直接部署。
+完整步骤见 [DEPLOY_ALIYUN_ECS.md](DEPLOY_ALIYUN_ECS.md)，包括 PostgreSQL、Gunicorn、systemd、Nginx、HTTPS、后台任务并发、流式代理设置与发布路由。
