@@ -48,11 +48,27 @@ ssh root@<ECS_PUBLIC_IP>
 
 ```bash
 adduser deploy
-usermod -aG sudo deploy
+getent group www-data >/dev/null || groupadd --system www-data
+usermod -aG sudo,www-data deploy
 su - deploy
 ```
 
 以下命令默认在 `deploy` 用户下执行。
+
+> **权限约定**：项目目录归 `deploy` 所有，组为 `www-data`；Gunicorn 和 Nginx 都以 `www-data` 运行。`deploy` 必须加入 `www-data` 组，才能读取组权限为 `640` 的 `.env`、执行 `.venv/bin/gunicorn` 并运行需要读取配置的 `manage.py` 命令。  
+> 如果使用已有普通用户而不是新建 `deploy`，请把该用户加入 `www-data` 组（`sudo usermod -aG www-data <用户名>`），并在后续命令中替换用户名。修改用户组后必须重新登录（或执行 `newgrp www-data`）才会生效；可用 `id deploy` 确认输出包含 `www-data`。
+
+权限矩阵：
+
+| 对象 | owner:group | mode | `deploy` | `www-data` |
+| --- | --- | --- | --- | --- |
+| `/srv/promptforge` | `deploy:www-data` | 750 | 读写执行 | 读/进入 |
+| 项目源码文件 | `deploy:www-data` | 640 | 读写 | 读 |
+| `.venv/bin/gunicorn` | `deploy:www-data` | 750 | 读写执行 | 读/执行 |
+| `.env` | `root:www-data` | 640 | 通过 `www-data` 组读取 | 读 |
+| `staticfiles/` | `deploy:www-data` | 目录 750 / 文件 640 | 读写 | 读 |
+
+Gunicorn 的 systemd 服务使用 `User=www-data` / `Group=www-data`；`deploy` 只负责上传代码、迁移和运维。不要把 `.env` 改成 `777`，也不要让 `deploy` 脱离 `www-data` 组。
 
 ---
 
@@ -249,10 +265,19 @@ DJANGO_HSTS_SECONDS=0
 cd /srv/promptforge
 source .venv/bin/activate
 
-python manage.py migrate
+python manage.py migrate --noinput
+python manage.py showmigrations generator
 python manage.py collectstatic --noinput
 python manage.py check --deploy
 ```
+
+`showmigrations generator` 必须显示 `0001` 到最新迁移全部为 `[X]`。再确认当前进程实际连接的数据库：
+
+```bash
+python manage.py shell -c "from django.db import connection; print(connection.vendor, connection.settings_dict['NAME'], connection.settings_dict['HOST'])"
+```
+
+应输出 `postgresql` 以及生产库名/主机；如果显示 `sqlite3` 或另一个数据库，说明当前 shell 的 `.env`/`DATABASE_URL` 与 Gunicorn 不一致。迁移和 Gunicorn 必须使用同一个 `.env` 和同一个 PostgreSQL 数据库。
 
 `check --deploy` 在启用 HTTPS 之前出现 HSTS / Secure Cookie 警告是正常的；完成第 9 节后应基本消除。
 
@@ -266,11 +291,29 @@ python manage.py createsuperuser
 
 ```bash
 sudo chown -R deploy:www-data /srv/promptforge
-sudo find /srv/promptforge -type d -exec chmod 750 {} \;
-sudo find /srv/promptforge -type f -exec chmod 640 {} \;
-sudo chmod 750 /srv/promptforge/.venv/bin/*
+sudo find /srv/promptforge -path /srv/promptforge/.venv -prune -o -type d -exec chmod 750 {} \;
+sudo find /srv/promptforge -path /srv/promptforge/.venv -prune -o -type f -exec chmod 640 {} \;
+# .venv 只调整目录/组读权限，不破坏原生扩展和 Python 符号链接
+sudo find /srv/promptforge/.venv -type d -exec chmod 750 {} \;
+sudo find /srv/promptforge/.venv -type f -exec chmod g+r {} \;
+sudo find /srv/promptforge/.venv/bin -maxdepth 1 -type f -exec chmod 750 {} \;
+# .env 由 root 持有、www-data 组可读；deploy 通过 www-data 组读取
+sudo chown root:www-data /srv/promptforge/.env
 sudo chmod 640 /srv/promptforge/.env
 ```
+
+验证组权限：
+
+```bash
+id deploy
+sudo -u www-data test -r /srv/promptforge/.env && echo ".env readable by www-data"
+sudo -u www-data test -x /srv/promptforge/.venv/bin/gunicorn && echo "gunicorn executable by www-data"
+sudo -u deploy test -r /srv/promptforge/.env && echo ".env readable by deploy"
+```
+
+如果 `id deploy` 没有 `www-data` 组，说明第 1 节加入组后没有重新登录；重新登录或执行 `newgrp www-data`。`.env` 归 root 所有，后续修改请使用 `sudo nano /srv/promptforge/.env`。
+
+> 不要把 `.venv` 里的原生扩展文件统一改成 `640`，也不要直接执行 `chmod 750 .venv/bin/*`：venv 中的 `python` / `python3` 通常是指向系统 Python 的符号链接，`chmod` 会跟随链接并修改系统解释器权限；原生 `.so` 扩展也需要保留安装时的权限。上面用 `-prune` 跳过 `.venv` 的递归 640，只对 `.venv` 目录加组执行、对普通文件加组读，并把 `.venv/bin` 下的启动脚本设为 750。
 
 ---
 
@@ -295,6 +338,8 @@ User=www-data
 Group=www-data
 WorkingDirectory=/srv/promptforge
 EnvironmentFile=/srv/promptforge/.env
+# 每次启动前先应用迁移，避免代码已更新但数据库缺表
+ExecStartPre=/srv/promptforge/.venv/bin/python /srv/promptforge/manage.py migrate --noinput
 ExecStart=/srv/promptforge/.venv/bin/gunicorn \
     --workers 3 \
     --bind 127.0.0.1:8000 \
@@ -311,6 +356,8 @@ WantedBy=multi-user.target
 
 关键点：
 
+- `ExecStartPre` 以 `www-data` 身份执行迁移，确保 `generator_generationjob` 等表存在；如果 `.env` 或数据库权限不正确，服务会直接启动失败，而不是等到访问页面才报 `relation ... does not exist`。
+- 如果未来部署多台 ECS 或多实例，应把迁移从 `ExecStartPre` 移到单独的一次性部署 Job，避免多个实例同时迁移。
 - `--timeout 240` 明显大于千问全栈生成预算 180 秒；生成任务本身在后台线程执行，HTTP 请求会立即返回 202。
 - `EnvironmentFile` 读取 `.env`；Django 内部也会用 python-dotenv 读取，二者不冲突。
 - 只监听 `127.0.0.1:8000`，公网访问统一经过 Nginx。
@@ -505,6 +552,76 @@ sudo ufw status
 
 ## 12. 常见问题排查
 
+### `relation "generator_generationjob" does not exist`
+
+这是**数据库迁移没有应用到 Gunicorn 实际连接的数据库**，不是 PostgreSQL 连接失败。按顺序检查：
+
+```bash
+cd /srv/promptforge
+source .venv/bin/activate
+id deploy
+python manage.py showmigrations generator
+python manage.py shell -c "from django.db import connection; print(connection.vendor, connection.settings_dict['NAME'], connection.settings_dict['HOST'])"
+python manage.py migrate --noinput
+python manage.py showmigrations generator
+sudo systemctl restart promptforge
+```
+
+如果 `deploy` 仍读取不到 `.env`，用与 Gunicorn 相同的 `www-data` 用户执行迁移：
+
+```bash
+sudo -u www-data /srv/promptforge/.venv/bin/python \
+  /srv/promptforge/manage.py migrate --noinput
+sudo -u www-data /srv/promptforge/.venv/bin/python \
+  /srv/promptforge/manage.py showmigrations generator
+sudo systemctl restart promptforge
+```
+
+判断：
+
+- `showmigrations generator` 有 `[ ]`：直接 `migrate --noinput`。
+- 输出 `sqlite3`：当前 shell 没有读到生产 `.env`，或 `DATABASE_URL` 为空；修正 `.env` 后重新迁移。
+- 输出 `postgresql` 但库名/主机不是 Gunicorn 使用的生产库：说明迁移和 Gunicorn 连接了不同数据库，统一 `.env`。
+- 如果当前终端曾经 `export DATABASE_URL=...`，shell 环境变量会覆盖 `.env` 的值；执行 `unset DATABASE_URL DJANGO_DEBUG` 后重新检查，或确认导出的值与 Gunicorn 的 `EnvironmentFile` 完全一致。
+- 如果迁移显示全部 `[X]` 但表仍然不存在，检查 PostgreSQL 实际 schema：
+
+```bash
+python manage.py dbshell
+```
+
+在 psql 中执行：
+
+```sql
+\dt generator_generationjob
+SELECT name FROM django_migrations WHERE app = 'generator';
+\q
+```
+
+如果迁移记录存在但实际表缺失，不要使用 `--fake` 跳过；应确认是否连错数据库/误用了旧库，必要时从备份恢复或由 DBA 修复迁移历史。
+
+> 添加第 7 节的 `ExecStartPre` 后，重启服务会自动先执行迁移；当前已经报错的实例仍需先手工执行一次 `migrate --noinput`。
+
+### Permission denied：`.env` / `gunicorn` / 静态文件
+
+按本文约定：
+
+- `deploy` 必须属于 `www-data` 补充组
+- `/srv/promptforge` 归 `deploy` 所有，组为 `www-data`
+- `.env` 归 `root:www-data`，权限 `640`
+- Gunicorn 以 `www-data` 运行
+
+检查：
+
+```bash
+id deploy
+sudo -u deploy test -r /srv/promptforge/.env && echo deploy-ok
+sudo -u www-data test -r /srv/promptforge/.env && echo www-data-ok
+sudo -u www-data test -x /srv/promptforge/.venv/bin/gunicorn && echo gunicorn-ok
+sudo -u www-data test -r /srv/promptforge/staticfiles/ && echo static-ok
+```
+
+如果 `id deploy` 缺少 `www-data`，重新登录或执行 `newgrp www-data`；不要只把 `.env` 改成 `777`。
+
 ### 502 Bad Gateway
 
 ```bash
@@ -615,13 +732,14 @@ source .venv/bin/activate
 # 2. 安装可能新增的依赖
 pip install -r requirements.txt
 
-# 3. 数据库迁移
-python manage.py migrate
+# 3. 数据库迁移并确认生产库已应用
+python manage.py migrate --noinput
+python manage.py showmigrations generator
 
 # 4. 收集静态文件
 python manage.py collectstatic --noinput
 
-# 5. 重启
+# 5. 重启（systemd 的 ExecStartPre 会再次确认迁移）
 sudo systemctl restart promptforge
 sudo systemctl reload nginx
 ```

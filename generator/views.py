@@ -617,7 +617,8 @@ BACKEND_SYSTEM_PROMPT = """你是资深全栈工程师。根据用户需求输�
 7. PREVIEW_HTML 是用于当前平台预览的独立静态页，必须完整可交互。"""
 
 FRONTEND_SYSTEM_PROMPT = """你是资深前端工程师。根据用户需求输出成熟、可运行的完整前端项目源码。
-用户明确要求只生成前端代码：不要生成 Django/Flask/Node 等后端服务，不要生成数据库、接口服务或后端依赖。
+当前项目采用默认的前端-only 模式：不要生成 Django/Flask/Node 等后端服务，不要生成数据库、接口服务或后端依赖。
+只有用户明确指定“全栈 / 前后端 / 需要后端”时，才允许生成后端代码。
 如果用户指定前端框架，必须使用指定框架；否则使用原生 HTML/CSS/JavaScript，确保无需构建即可直接打开。
 必须给出完整的前端目录结构，例如 index.html、src/、styles/、assets/、README.md、DEPLOY.md；
 如果使用 React/Vue/Vite 等框架，还必须包含 package.json、入口文件和运行说明。
@@ -656,21 +657,29 @@ BACKEND_FRAMEWORKS = (
     ("Java", r"\bjava\b"),
     ("Python", r"\bpython\b"),
 )
-BACKEND_HINTS = re.compile(
-    r"(后端|服务端|服务器|数据库|登录|注册|认证|鉴权|用户系统|多用户|权限控制|管理后台|后台管理|"
-    r"支付|订单|上传文件|文件存储|短信|邮件|实时协作|聊天室|联机|多人|房间|websocket|"
-    r"持久化存储|数据同步|跨设备|定时任务|爬虫|部署|博客|文章发布|评论|论坛|社区|"
-    r"商城|电商|库存|会员|账号体系|角色权限|审批|工作流|消息通知|点赞|收藏|预约|报表|"
-    r"数据统计|云端|restful|graphql|backend|server-side|database|authentication|"
-    r"authorization|admin panel|payment|multiplayer|blog|forum|e-commerce|inventory)",
-    re.IGNORECASE,
-)
 FRONTEND_ONLY_HINTS = re.compile(
     r"(纯前端|仅前端|只要前端|只需要前端|只生成前端|只写前端|只做前端|"
     r"前端代码即可|前端项目即可|只输出前端|不生成后端|不要生成后端|"
+    r"不需要生成后端|无需生成后端|不用生成后端|"
     r"不要写后端|不用写后端|不需要写后端|"
     r"不需要后端|无需后端|不用后端|不要后端|"
-    r"不使用数据库|no backend|frontend[\s-]*only|frontend code only)",
+    r"不使用数据库|不要使用数据库|不要用数据库|不需要数据库|无需数据库|不用数据库|"
+    r"no backend|frontend[\s-]*only|frontend code only)",
+    re.IGNORECASE,
+)
+# The product default is a frontend-only project.  A full-stack bundle is only
+# generated when the requirement explicitly asks for a backend/database or a
+# server-side framework; broad feature words such as "login" must not silently
+# opt the user into a backend.
+FULLSTACK_HINTS = re.compile(
+    r"(全栈|full[\s-]*stack|前后端|前端\s*[+＋和与及]\s*后端|"
+    r"前端.{0,6}后端.{0,6}(?:都|一起|完整)|"
+    r"(?:需要|要|带|包含|生成|开发|做|使用|用).{0,10}"
+    r"(?:后端|服务端|server[\s-]*side|backend|数据库|database)|"
+    r"(?:后端|服务端).{0,10}(?:代码|项目|服务|接口|api|数据库)|"
+    r"完整.{0,6}(?:后端|服务端|全栈)|"
+    r"\b(?:django|flask|fastapi|spring(?:\s*boot)?|express|nestjs|laravel|"
+    r"ruby\s+on\s+rails|asp\.?net|gin|node(?:\.js)?)\b)",
     re.IGNORECASE,
 )
 FRONTEND_FRAMEWORKS = (
@@ -688,6 +697,13 @@ def _wants_frontend_only(prompt: str) -> bool:
     return bool(FRONTEND_ONLY_HINTS.search(prompt))
 
 
+def _wants_fullstack(prompt: str) -> bool:
+    """True only when the requirement explicitly asks for a backend/full stack."""
+    if _wants_frontend_only(prompt):
+        return False
+    return bool(FULLSTACK_HINTS.search(prompt))
+
+
 def _detect_frontend_label(prompt: str) -> str:
     for label, pattern in FRONTEND_FRAMEWORKS:
         if pattern and re.search(pattern, prompt, flags=re.IGNORECASE):
@@ -696,16 +712,14 @@ def _detect_frontend_label(prompt: str) -> str:
 
 
 def _detect_backend_requirement(prompt: str) -> tuple[bool, str]:
-    if FRONTEND_ONLY_HINTS.search(prompt):
+    if not _wants_fullstack(prompt):
         return False, ""
     framework = ""
     for label, pattern in BACKEND_FRAMEWORKS:
         if re.search(pattern, prompt, flags=re.IGNORECASE):
             framework = label
             break
-    if framework or BACKEND_HINTS.search(prompt):
-        return True, framework or "Django 4.2 + PostgreSQL"
-    return False, ""
+    return True, framework or "Django 4.2 + PostgreSQL"
 
 
 def _backend_provider() -> str:
@@ -849,7 +863,8 @@ def _frontend_bundle_prompt(
         "用户需求：\n"
         f"{prompt}\n\n"
         f"检测到的前端技术栈：{detected_label}\n"
-        "用户明确要求只生成前端代码，不要生成后端服务、数据库或服务端接口。\n"
+        "当前是默认的前端-only 生成模式，未要求后端：不要生成后端服务、数据库或服务端接口。\n"
+        "如果页面需要数据，请使用内置模拟数据或 localStorage，保证可直接在浏览器运行。\n"
         "请生成完整的前端项目：index.html、src/、styles/、assets/、README.md、DEPLOY.md，"
         "如果使用 React/Vue/Vite 等框架则包含 package.json 和入口文件。\n"
         "所有前端资源必须分层到目录中，不能只输出一个 HTML。\n"
@@ -1555,6 +1570,189 @@ def _frontend_project_is_complete(project: dict | None) -> bool:
     has_subdir = any("/" in path for path in paths)
     has_deploy = any(path.rsplit("/", 1)[-1] == "deploy.md" for path in paths)
     return has_html and source_count >= 2 and has_subdir and has_deploy
+
+
+PREVIEW_REPAIR_SYSTEM_PROMPT = """你是资深前端修复工程师。用户的应用预览在浏览器中白屏或渲染失败。
+请根据原始需求、当前项目文件、当前预览和浏览器报错，定位根因并输出修复后的完整项目代码。
+必须严格使用 ===BACKEND===、===FILES===、===FILE: 相对路径===、===END_FILE===、
+===PREVIEW_HTML===、===END_PREVIEW=== 分段格式，不要输出解释或 Markdown 代码块围栏。
+===PREVIEW_HTML=== 必须是无需构建、可直接在浏览器 iframe 中运行的单文件页面：
+所有 CSS/JavaScript 内联；不得引用本地相对路径的 css/js/图片；不得输出浏览器无法执行的 JSX；
+React/Vue 等运行时若来自 CDN，必须提供无构建可执行的方案；首屏必须出现可见内容。"""
+MAX_PREVIEW_REPAIR_ISSUES = 8
+MAX_PREVIEW_REPAIR_ATTEMPTS = 3
+
+
+def _normalize_preview_issues(value) -> list[str]:
+    """Clean browser-reported render failures for a repair prompt."""
+    if isinstance(value, str):
+        raw_items = [value]
+    elif isinstance(value, list):
+        raw_items = value
+    else:
+        raw_items = []
+    issues: list[str] = []
+    seen = set()
+    for item in raw_items:
+        text = re.sub(r"\s+", " ", str(item or "")).strip()[:320]
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        issues.append(text)
+        if len(issues) >= MAX_PREVIEW_REPAIR_ISSUES:
+            break
+    if not issues:
+        issues.append("预览页加载后没有可见内容，可能存在 JavaScript 语法错误、运行时异常或资源加载失败。")
+    return issues
+
+
+def _preview_is_usable(preview: str | None) -> bool:
+    if not preview or len(preview.strip()) < 20:
+        return False
+    lower = preview.lower()
+    if "<body" not in lower and "<html" not in lower:
+        return False
+    if lower.count("<script") > lower.count("</script>"):
+        return False
+    return True
+
+
+def _extract_repair_html(raw: str) -> str | None:
+    """Extract PREVIEW_HTML (or a raw HTML document) from a repair response."""
+    if not raw:
+        return None
+    end_matches = list(PREVIEW_END_RE.finditer(raw))
+    segment = raw
+    if end_matches:
+        end_match = end_matches[-1]
+        start_match = PREVIEW_START_RE.search(raw[: end_match.start()])
+        segment = (
+            raw[start_match.end():end_match.start()]
+            if start_match
+            else raw[:end_match.start()]
+        )
+    html = _extract_html(segment)
+    return _ensure_runnable_html(html) if html else None
+
+
+def _preview_files_with_repair(files: list | None, preview: str) -> list[dict]:
+    repaired = []
+    found = False
+    for item in files or []:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path") or "")
+        content = str(item.get("content") or "")
+        if path.replace("\\", "/").strip("/").lower() in {"preview.html", "preview.htm"}:
+            content = preview
+            found = True
+        repaired.append({"path": path, "content": content})
+    if not found:
+        repaired.append({"path": "preview.html", "content": preview})
+    return repaired
+
+
+def _preview_repair_prompt(
+    history: GenerateHistory,
+    version: GenerateVersion,
+    issues: list[str],
+) -> str:
+    files = version.files or []
+    priority = (
+        "preview.html",
+        "index.html",
+        "package.json",
+        "vite.config",
+        "src/main",
+        "src/app",
+        "src/index",
+        "styles/",
+        "style.css",
+        "app.js",
+        "main.js",
+        "main.css",
+    )
+
+    def rank(item: dict) -> tuple[int, str]:
+        path = str(item.get("path") or "").lower()
+        for index, marker in enumerate(priority):
+            if path.endswith(marker) or marker in path:
+                return index, path
+        if path.endswith((".html", ".css", ".js", ".jsx", ".tsx", ".vue", ".svelte")):
+            return len(priority), path
+        return len(priority) + 1, path
+
+    file_blocks = []
+    total_chars = 0
+    for item in sorted(
+        (entry for entry in files if isinstance(entry, dict)),
+        key=rank,
+    ):
+        path = str(item.get("path") or "unknown")
+        content = str(item.get("content") or "")
+        remaining = 70000 - total_chars
+        if remaining <= 0:
+            break
+        content = content[: min(remaining, 30000)]
+        total_chars += len(content)
+        file_blocks.append(f"===FILE: {path}===\n{content}\n===END_FILE===")
+    if not file_blocks:
+        file_blocks.append("===FILE: preview.html===\n" + (version.html_code or ""))
+
+    issue_text = "\n".join(f"- {issue}" for issue in issues)
+    preview = (version.html_code or "")[:50000]
+    return (
+        "用户原始需求：\n"
+        f"{history.prompt}\n\n"
+        "浏览器检测到预览页渲染失败，已确认的问题：\n"
+        f"{issue_text}\n\n"
+        "当前项目文件：\n"
+        + "\n".join(file_blocks)
+        + "\n\n当前 PREVIEW_HTML：\n"
+        "===PREVIEW_HTML===\n"
+        f"{preview}\n"
+        "===END_PREVIEW===\n\n"
+        "请修复导致白屏/渲染失败的根因，并输出完整可运行的项目文件包和修复后的 "
+        "PREVIEW_HTML。必须保持用户原有的功能和视觉需求，不能只输出错误说明。"
+        "如果问题来自本地相对路径资源、JSX、浏览器不支持的语法、提前访问 DOM、"
+        "React/Vue 挂载失败或语法错误，请在修复后的代码中直接解决。"
+    )
+
+
+def _apply_preview_repair(
+    history: GenerateHistory,
+    version: GenerateVersion,
+    preview: str,
+    files: list | None = None,
+    backend_label: str | None = None,
+) -> tuple[GenerateHistory, GenerateVersion]:
+    """Replace the failed preview/code in place; no extra version is created."""
+    if not _preview_is_usable(preview):
+        raise RuntimeError("修复结果不是可运行的 HTML 页面。")
+    with transaction.atomic():
+        locked_history = GenerateHistory.objects.select_for_update().get(pk=history.pk)
+        locked_version = GenerateVersion.objects.select_for_update().get(pk=version.pk)
+        repaired_files = (
+            files
+            if files is not None
+            else _preview_files_with_repair(locked_version.files or [], preview)
+        )
+        note = locked_version.note or "初始生成"
+        if "预览修复" not in note:
+            note = f"{note} · 预览修复"
+        locked_version.html_code = preview
+        locked_version.files = repaired_files
+        locked_version.note = note[:500]
+        locked_version.save(update_fields=["html_code", "files", "note"])
+        fields = ["html_code"]
+        locked_history.html_code = preview
+        if backend_label:
+            locked_history.backend_label = backend_label
+            fields.append("backend_label")
+        locked_history.save(update_fields=fields)
+    history.refresh_from_db()
+    version.refresh_from_db()
+    return history, version
 
 
 REFERENCE_IMAGE_RE = re.compile(
@@ -2673,6 +2871,150 @@ def _refine_working_message(elapsed: float) -> str:
     return "正在检查修改结果并准备保存"
 
 
+def _run_render_repair_job(job: GenerationJob) -> None:
+    """Repair a generated preview that the browser reported as blank/broken."""
+    state = job.state if isinstance(job.state, dict) else {}
+    history = (
+        GenerateHistory.objects.filter(pk=state.get("target_history_id"))
+        .prefetch_related("versions")
+        .first()
+    )
+    if not history:
+        raise RuntimeError("项目不存在或已被删除，无法修复预览。")
+    version = history.versions.filter(pk=state.get("target_version_id")).first()
+    if not version:
+        raise RuntimeError("目标版本不存在，无法修复预览。")
+
+    issues = _normalize_preview_issues(state.get("issues"))
+    provider = (
+        history.model_provider if history.model_provider in PROVIDERS else "deepseek"
+    )
+    model_label = PROVIDERS[provider]["label"]
+    state["kind"] = "render_repair"
+    state["target_history_id"] = history.id
+    state["target_version_id"] = version.id
+    state["target_version_no"] = version.version_no
+    state["target_project_prompt"] = history.prompt
+    state["issues"] = issues
+    state["providers"] = {
+        provider: {
+            "provider": provider,
+            "label": model_label,
+            "model": _provider_model(provider),
+            "status": "streaming",
+            "message": "首次生成的代码渲染失败，正在修复，请稍等",
+            "chars": 0,
+        }
+    }
+    state["stages"] = []
+    repair_message = "首次生成的代码渲染失败，正在修复，请稍等"
+    _job_stage(state, "preview_repair", "修复预览", repair_message)
+    job.mode = "repair"
+    job.status = GenerationJob.STATUS_RUNNING
+    job.progress = 12
+    job.stage_title = "修复预览"
+    job.stage_message = repair_message
+    job.project_type = history.project_type
+    job.backend_label = history.backend_label
+    job.state = state
+    _save_job(job)
+
+    prompt = _preview_repair_prompt(history, version, issues)
+    events: queue.Queue = queue.Queue()
+
+    def worker() -> None:
+        try:
+            result = _call_backend_model(
+                provider,
+                prompt,
+                job_id=str(job.id),
+                system_prompt=PREVIEW_REPAIR_SYSTEM_PROMPT,
+            )
+        except Exception:
+            logger.exception("Preview repair call failed for %s.", provider)
+            result = None
+        events.put(result)
+
+    threading.Thread(
+        target=worker,
+        daemon=True,
+        name=f"job-{job.id}-preview-repair-{provider}",
+    ).start()
+
+    started_at = time.monotonic()
+    last_save = time.monotonic()
+    max_seconds = _backend_timeout(provider)
+    content = None
+    while True:
+        _ensure_job_active(job.pk)
+        try:
+            content = events.get(timeout=1)
+            break
+        except queue.Empty:
+            elapsed = time.monotonic() - started_at
+            job.progress = max(
+                job.progress,
+                min(86, 16 + int(min(elapsed / max(max_seconds, 1), 1) * 68)),
+            )
+            if time.monotonic() - last_save >= 1.2:
+                job.state = state
+                _save_job(job)
+                last_save = time.monotonic()
+
+    _ensure_job_active(job.pk)
+    if not content:
+        raise RuntimeError("修复模型未返回结果，请稍后重试。")
+
+    parsed = _parse_project_bundle(
+        content,
+        history.backend_label
+        or ("原生 HTML/CSS/JavaScript" if history.project_type == "frontend" else "Django 4.2 + PostgreSQL"),
+    )
+    complete = (
+        _frontend_project_is_complete(parsed)
+        if history.project_type == "frontend"
+        else _project_is_complete(parsed)
+    )
+    repaired_files = None
+    repaired_label = None
+    if parsed and complete and _preview_is_usable(parsed.get("preview_html")):
+        preview = parsed["preview_html"]
+        repaired_files = parsed["files"]
+        repaired_label = parsed.get("backend_label") or None
+    else:
+        preview = _extract_repair_html(content)
+        if not _preview_is_usable(preview):
+            raise RuntimeError("修复模型返回的页面仍无法渲染，请稍后重试。")
+        # Keep the project files and update the standalone preview copy only.
+        repaired_files = None
+
+    _ensure_job_active(job.pk)
+    job.progress = 92
+    job.stage_title = "保存修复结果"
+    job.stage_message = "正在写入修复后的代码"
+    job.state = state
+    _save_job(job)
+    history, version = _apply_preview_repair(
+        history, version, preview, files=repaired_files, backend_label=repaired_label
+    )
+    _ensure_job_active(job.pk)
+    _finish_job_stages(state)
+    state["repair_applied"] = True
+    state["created_version_id"] = version.id
+    state["created_version_no"] = version.version_no
+    state["providers"][provider]["status"] = "done"
+    state["providers"][provider]["message"] = "预览修复完成"
+    job.history = history
+    job.status = GenerationJob.STATUS_COMPLETED
+    job.progress = 100
+    job.stage_title = "修复完成"
+    job.stage_message = "修复后的页面已保存，正在重新检测预览"
+    job.project_type = history.project_type
+    job.backend_label = history.backend_label
+    job.state = state
+    _save_job(job)
+
+
 def _run_refine_job(job: GenerationJob) -> None:
     state = job.state if isinstance(job.state, dict) else {}
     history = (
@@ -2907,14 +3249,23 @@ def _run_generation_job(job_id: str) -> None:
             return
         state = job.state if isinstance(job.state, dict) else {}
         is_refine = state.get("kind") == "refine"
+        is_repair = state.get("kind") == "render_repair"
         job.status = GenerationJob.STATUS_RUNNING
-        job.stage_title = "准备修改" if is_refine else "准备生成"
+        job.stage_title = (
+            "准备修复预览" if is_repair else "准备修改" if is_refine else "准备生成"
+        )
         job.stage_message = (
-            "后台修改任务已启动" if is_refine else "后台任务已启动"
+            "首次生成的代码渲染失败，正在修复，请稍等"
+            if is_repair
+            else "后台修改任务已启动"
+            if is_refine
+            else "后台任务已启动"
         )
         _save_job(job)
         if is_refine:
             _run_refine_job(job)
+        elif is_repair:
+            _run_render_repair_job(job)
         elif job.project_type == "backend":
             _run_backend_job(job)
         elif state.get("bundle_mode") == "frontend":
@@ -2977,7 +3328,9 @@ def start_job(request):
         return _error("不支持的生成模式。")
 
     client_id = _normalize_client_id(data.get("client_id"))
-    frontend_only = _wants_frontend_only(prompt)
+    # Frontend-only is the default.  Generate a backend bundle only when the
+    # user explicitly asks for a full-stack/backend project.
+    frontend_only = not _wants_fullstack(prompt)
     if frontend_only:
         backend_label = _detect_frontend_label(prompt)
     else:
@@ -3099,15 +3452,116 @@ def delete_job(request, job_id):
         job.refresh_from_db()
     except GenerationJob.DoesNotExist:
         return JsonResponse({"ok": True, "deleted": False, "cancelled": was_active})
+    kind = (job.state or {}).get("kind")
     history_id = (
         job.history_id
-        if was_active or job.status != GenerationJob.STATUS_COMPLETED
+        if (was_active or job.status != GenerationJob.STATUS_COMPLETED)
+        and kind != "render_repair"
         else None
     )
     job.delete()
     if history_id:
         GenerateHistory.objects.filter(pk=history_id).delete()
     return JsonResponse({"ok": True, "deleted": True, "cancelled": was_active})
+
+
+@require_POST
+def start_preview_repair(request, history_id, version_id):
+    """Queue a background repair when the browser detects a blank preview."""
+    try:
+        data = _read_json(request)
+    except ValueError as exc:
+        return _error(str(exc))
+
+    history = (
+        GenerateHistory.objects.prefetch_related("versions")
+        .filter(pk=history_id)
+        .first()
+    )
+    if not history:
+        return _error("项目不存在或已被删除。", status=404)
+    version = history.versions.filter(pk=version_id).first()
+    if not version:
+        return _error("版本不存在或已被删除。", status=404)
+
+    client_id = _normalize_client_id(data.get("client_id"))
+    issues = _normalize_preview_issues(data.get("issues"))
+    try:
+        attempt = int(data.get("attempt") or 1)
+    except (TypeError, ValueError):
+        attempt = 1
+    attempt = max(1, min(attempt, MAX_PREVIEW_REPAIR_ATTEMPTS))
+
+    # A browser may report the same failure repeatedly (page reload, two tabs).
+    # Reuse an in-flight repair instead of paying for duplicate model calls.
+    active_jobs = (
+        GenerationJob.objects.filter(
+            client_id=client_id,
+            status__in=[GenerationJob.STATUS_QUEUED, GenerationJob.STATUS_RUNNING],
+        )
+        .order_by("-created_at")[:20]
+    )
+    for existing in active_jobs:
+        existing_state = existing.state if isinstance(existing.state, dict) else {}
+        if (
+            existing_state.get("kind") == "render_repair"
+            and existing_state.get("target_history_id") == history.id
+            and existing_state.get("target_version_id") == version.id
+        ):
+            return JsonResponse({"job": _job_payload(existing)}, status=202)
+
+    provider = (
+        history.model_provider if history.model_provider in PROVIDERS else "deepseek"
+    )
+    state = {
+        "kind": "render_repair",
+        "target_history_id": history.id,
+        "target_version_id": version.id,
+        "target_version_no": version.version_no,
+        "target_project_prompt": history.prompt,
+        "issues": issues,
+        "attempt": attempt,
+        "providers": {
+            provider: {
+                "provider": provider,
+                "label": PROVIDERS[provider]["label"],
+                "model": _provider_model(provider),
+                "status": "waiting",
+                "message": "首次生成的代码渲染失败，正在修复，请稍等",
+                "chars": 0,
+            }
+        },
+        "stages": [
+            {
+                "key": "preview_repair",
+                "title": "修复预览",
+                "message": "首次生成的代码渲染失败，正在修复，请稍等",
+                "status": "active",
+            }
+        ],
+        "used_mock": False,
+        "race": None,
+    }
+    job = GenerationJob.objects.create(
+        client_id=client_id,
+        prompt=history.prompt,
+        requested_mode="single",
+        mode="repair",
+        status=GenerationJob.STATUS_QUEUED,
+        progress=1,
+        stage_title="预览修复排队",
+        stage_message="首次生成的代码渲染失败，正在修复，请稍等",
+        state=state,
+        project_type=history.project_type,
+        backend_label=history.backend_label,
+    )
+    threading.Thread(
+        target=_run_generation_job,
+        args=(str(job.id),),
+        daemon=True,
+        name=f"preview-repair-{job.id}",
+    ).start()
+    return JsonResponse({"job": _job_payload(job)}, status=202)
 
 
 def _backend_event_stream(request, prompt: str, detected_label: str):

@@ -652,8 +652,13 @@
     .preview-loading {
       position: absolute; inset: 0; z-index: 3; display: flex; flex-direction: column;
       align-items: center; justify-content: center; gap: 10px; background: #fff;
-      color: var(--muted); font-size: 10px;
+      color: var(--muted); font-size: 10px; text-align: center; padding: 24px;
     }
+    .preview-loading.is-repair { color: #b45309; background: #fffbeb; }
+    .preview-loading.is-repair .preview-spinner { border-color: #fde68a; border-top-color: #d97706; }
+    .preview-loading .mini-btn { margin-top: 4px; }
+    .preview-loading.is-failed { color: #b91c1c; background: #fef2f2; }
+    .preview-loading.is-failed .preview-spinner { display: none; }
     .preview-spinner {
       width: 28px; height: 28px; border-radius: 50%; border: 2px solid #e0e7ff;
       border-top-color: #6366f1; animation: spin .8s linear infinite;
@@ -1149,7 +1154,7 @@
           </div>
         </div>
         <div class="form-foot">
-          <span class="form-hint">Ctrl / ⌘ + Enter 快速生成 · 前端 / 全栈项目 · 实时阶段进度</span>
+          <span class="form-hint">Ctrl / ⌘ + Enter 快速生成 · 默认生成前端项目；需要全栈请在需求中写明“全栈 / 前后端”</span>
           <button id="generateBtn" class="btn-primary generate-btn" type="submit">
             <span id="generateSpinner" class="btn-spinner" hidden></span>
             <span id="generateBtnText">开始生成</span>
@@ -1320,7 +1325,8 @@
             <iframe id="previewFrame" title="生成的应用预览" sandbox="allow-scripts"></iframe>
             <div id="previewLoading" class="preview-loading" hidden>
               <span class="preview-spinner"></span>
-              <span>正在渲染预览…</span>
+              <span id="previewLoadingText">正在渲染预览…</span>
+              <button id="previewRetryBtn" class="mini-btn" type="button" hidden>重新修复</button>
             </div>
             <div id="selectionHint" class="selection-hint" hidden>点击预览中的组件进行选择</div>
           </div>
@@ -1510,6 +1516,8 @@
         previewView: $("#previewView"),
         previewFrame: $("#previewFrame"),
         previewLoading: $("#previewLoading"),
+        previewLoadingText: $("#previewLoadingText"),
+        previewRetryBtn: $("#previewRetryBtn"),
         selectionHint: $("#selectionHint"),
         sourceView: $("#sourceView"),
         fileTree: $("#fileTree"),
@@ -1579,6 +1587,17 @@
         jobFinished: false,
         jobPollTimer: null,
         previewToken: 0,
+        previewVersionId: null,
+        previewCheck: {
+          versionId: null,
+          attempts: 0,
+          repairing: false,
+          jobId: null,
+          lastFailure: null,
+          pendingFailure: null,
+          statusTimer: null,
+          received: false,
+        },
         chat: {
           open: false,
           busy: false,
@@ -2175,6 +2194,14 @@
       }
 
       function jobStatusLabel(job) {
+        if (job.kind === "render_repair") {
+          return ({
+            queued: "修复排队",
+            running: "修复中",
+            completed: "修复完成",
+            failed: "修复失败",
+          })[job.status] || job.status;
+        }
         if (job.kind === "refine") {
           return ({
             queued: "修改排队",
@@ -2202,31 +2229,36 @@
         el.jobsList.innerHTML = state.jobs.map((job) => {
           const active = job.status === "queued" || job.status === "running";
           const isRefine = job.kind === "refine";
+          const isRepair = job.kind === "render_repair";
           const cls = job.status === "completed" ? "is-done" : job.status === "failed" ? "is-failed" : "is-running";
           const progress = Math.max(0, Math.min(100, Number(job.progress) || 0));
           let targetUrl = "";
-          if (isRefine && job.target_history_id) {
+          if ((isRefine || isRepair) && job.target_history_id) {
             targetUrl = `/workspace/?history=${job.target_history_id}`;
             if (job.target_version_id) targetUrl += `&version=${job.target_version_id}`;
-            if (active) targetUrl += `&refineJob=${job.id}`;
+            if (active) targetUrl += isRepair ? `&repairJob=${job.id}` : `&refineJob=${job.id}`;
           } else if (active) {
             targetUrl = `/workspace/?job=${job.id}`;
           } else if (job.history_id) {
             targetUrl = `/workspace/?history=${job.history_id}`;
           }
-          const title = isRefine
-            ? `修改「${shortText(job.target_project_prompt || "项目", 40)}」v${job.target_version_no || "?"}`
-            : shortText(job.prompt, 74);
+          const title = isRepair
+            ? `修复「${shortText(job.target_project_prompt || "项目", 40)}」v${job.target_version_no || "?"}`
+            : isRefine
+              ? `修改「${shortText(job.target_project_prompt || "项目", 40)}」v${job.target_version_no || "?"}`
+              : shortText(job.prompt, 74);
           const stageText = job.stage_title
             ? `${job.stage_title}${job.stage_message ? ` · ${shortText(job.stage_message, 42)}` : ""}`
             : shortText(job.stage_message || "正在处理", 48);
-          const metaLabel = isRefine
-            ? "在线修改"
-            : job.project_type === "backend"
-              ? "全栈项目"
-              : job.project_type === "frontend"
-                ? "前端项目"
-                : "";
+          const metaLabel = isRepair
+            ? "预览修复"
+            : isRefine
+              ? "在线修改"
+              : job.project_type === "backend"
+                ? "全栈项目"
+                : job.project_type === "frontend"
+                  ? "前端项目"
+                  : "";
           const referenceLabel = job.has_reference_image ? " · 含参考图" : "";
           return `
             <article class="job-item ${cls}">
@@ -2259,11 +2291,13 @@
           const jobs = Array.isArray(data.jobs) ? data.jobs : [];
           let newlyCompleted = false;
           let completedRefine = false;
+          let completedRepair = false;
           jobs.forEach((job) => {
             const previous = state.jobStatusMap[job.id];
             if (job.status === "completed" && previous && previous !== "completed") {
               newlyCompleted = true;
               if (job.kind === "refine") completedRefine = true;
+              if (job.kind === "render_repair") completedRepair = true;
             }
             state.jobStatusMap[job.id] = job.status;
           });
@@ -2275,9 +2309,11 @@
           if (newlyCompleted && !initial) {
             await loadProjects();
             toast(
-              completedRefine
-                ? "后台修改已完成，项目已更新到主页。"
-                : "后台生成已完成，项目已更新到主页。",
+              completedRepair
+                ? "预览自动修复已完成，项目版本已更新。"
+                : completedRefine
+                  ? "后台修改已完成，项目已更新到主页。"
+                  : "后台生成已完成，项目已更新到主页。",
               "success",
               4200
             );
@@ -3016,8 +3052,41 @@
         install("sessionStorage");
       }
 
-      function injectPreviewStorageShim(html) {
-        const shim = "<script>(" + previewStorageFallback.toString() + ")();</" + "script>";
+      function injectPreviewRuntime(html, token) {
+
+        const diagnostics = `
+(function () {
+  var errors = [];
+  window.__promptforgeErrors = errors;
+  function record(kind, message, extra) {
+    var text = String(message || "").replace(/\\s+/g, " ").trim().slice(0, 280);
+    if (!text) return;
+    if (extra) text += " (" + String(extra).slice(0, 120) + ")";
+    errors.push(kind + "：" + text);
+    if (errors.length > 8) errors.shift();
+  }
+  window.addEventListener("error", function (event) {
+    var target = event.target;
+    if (target && target !== window && (target.src || target.href)) {
+      record("资源加载失败", target.src || target.href);
+      return;
+    }
+    record(
+      "JavaScript 错误",
+      event.message || "脚本执行失败",
+      (event.filename || "") + ":" + (event.lineno || 0)
+    );
+  }, true);
+  window.addEventListener("unhandledrejection", function (event) {
+    var reason = event.reason;
+    record(
+      "未处理的 Promise 异常",
+      reason && reason.message ? reason.message : String(reason || "")
+    );
+  });
+})();`;
+        const shim = "<script>(" + previewStorageFallback.toString() + ")();"
+          + diagnostics + "</" + "script>";
         const head = html.match(/<head[^>]*>/i);
         if (head) {
           const index = head.index + head[0].length;
@@ -3036,14 +3105,47 @@
 
       function setPreviewDocument(version, htmlOverride = null) {
         const token = String(++state.previewToken);
+        if (state.previewCheck.versionId !== version.id) {
+          state.previewCheck = {
+            versionId: version.id,
+            attempts: 0,
+            repairing: false,
+            jobId: null,
+            lastFailure: null,
+            pendingFailure: null,
+            statusTimer: null,
+            received: false,
+          };
+        }
+        window.clearTimeout(state.previewCheck.statusTimer);
+        state.previewCheck.statusTimer = null;
+        state.previewCheck.received = false;
+        state.previewCheck.statusTimer = window.setTimeout(() => {
+          if (state.previewCheck.received) return;
+          const current = currentVersion();
+          if (!current || current.id !== version.id) return;
+          handlePreviewStatus({
+            ok: false,
+            issues: [
+              "预览页在 10 秒内没有上报渲染完成，可能是内联脚本被 CSP 阻止、脚本语法错误或页面持续白屏。",
+            ],
+          });
+        }, 10000);
+        state.previewVersionId = version.id;
         el.previewLoading.hidden = false;
+        el.previewLoading.classList.remove("is-repair", "is-failed");
+        if (el.previewLoadingText) el.previewLoadingText.textContent = "正在渲染预览…";
+        if (el.previewRetryBtn) el.previewRetryBtn.hidden = true;
         let html = htmlOverride != null ? htmlOverride : (version.html_code || "");
-        html = injectPreviewStorageShim(html);
+        html = injectPreviewRuntime(html, token);
         const readyScript = String.raw`
 <script>
 (function () {
   var TOKEN = "${token}";
   var sent = false;
+  var statusSent = false;
+  var statusTimer = null;
+  var startedAt = Date.now();
   var selecting = false;
   var drag = null;
   var box = null;
@@ -3058,8 +3160,128 @@
     sent = true;
     post({ type: "promptforge-preview-ready", token: TOKEN });
   }
-  function check() {
-    if (document.body && document.body.innerText.trim().length > 0) sendReady();
+  function elementShown(el) {
+    var node = el;
+    while (node && node.nodeType === 1) {
+      var style = null;
+      try { style = window.getComputedStyle(node); } catch (e) {}
+      if (style) {
+        if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse") return false;
+        var opacity = parseFloat(style.opacity);
+        if (isFinite(opacity) && opacity <= 0.01) return false;
+      }
+      node = node.parentElement;
+    }
+    return true;
+  }
+  function collectVisibleText(body) {
+    var parts = [];
+    var total = 0;
+    try {
+      var walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, null, false);
+      var node;
+      while ((node = walker.nextNode())) {
+        var text = (node.nodeValue || "").replace(/\s+/g, " ").trim();
+        if (!text) continue;
+        var parent = node.parentElement;
+        if (!parent || !elementShown(parent)) continue;
+        var rect = parent.getBoundingClientRect();
+        if (rect.width <= 2 || rect.height <= 2) continue;
+        var style = window.getComputedStyle(parent);
+        if (parseFloat(style.fontSize) <= 0) continue;
+        parts.push(text);
+        total += text.length;
+        if (total >= 500) break;
+      }
+    } catch (e) {}
+    return parts.join(" ").slice(0, 800);
+  }
+  function inspectPreview() {
+    var body = document.body;
+    if (!body) {
+      return { ok: false, issues: ["页面缺少 body，HTML 结构不完整"], textLength: 0, visibleElements: 0, media: 0, errors: [] };
+    }
+    var text = collectVisibleText(body);
+    var visible = 0;
+    var nodes = body.querySelectorAll("*");
+    for (var i = 0; i < nodes.length; i++) {
+      if (!elementShown(nodes[i])) continue;
+      var rect = nodes[i].getBoundingClientRect();
+      if (rect.width > 2 && rect.height > 2) {
+        visible += 1;
+        if (visible >= 50) break;
+      }
+    }
+    var media = 0;
+    var mediaNodes = body.querySelectorAll("canvas,svg,img,video,iframe");
+    for (var j = 0; j < mediaNodes.length; j++) {
+      if (!elementShown(mediaNodes[j])) continue;
+      var mediaRect = mediaNodes[j].getBoundingClientRect();
+      if (mediaRect.width > 8 && mediaRect.height > 8) {
+        media += 1;
+        if (media >= 5) break;
+      }
+    }
+    var loadingOnly = /^(加载中|正在加载|loading|please wait)[.…!！\s]*$/i.test(text);
+    var hasContent = (!loadingOnly && text.length >= 2) || media > 0 || (!loadingOnly && visible >= 8);
+    var issues = [];
+    if (!hasContent) {
+      issues.push(
+        text
+          ? "页面只显示加载占位，没有渲染出应用内容"
+          : "页面没有可见文本或组件，DOM 可能为空或内容被 CSS 隐藏"
+      );
+      if (visible === 0) issues.push("所有内容元素尺寸为 0、透明或不可见");
+    }
+    var errors = window.__promptforgeErrors || [];
+    if (!hasContent) {
+      for (var k = Math.max(0, errors.length - 6); k < errors.length; k++) issues.push(errors[k]);
+      var scripts = document.scripts || [];
+      for (var s = 0; s < scripts.length; s++) {
+        var src = scripts[s].getAttribute("src") || "";
+        if (src && !/^(?:https?:|data:|blob:|\/\/)/i.test(src)) {
+          issues.push("预览引用了无法加载的本地脚本：" + src);
+        }
+      }
+      if (document.querySelector('script[type="module"]')) {
+        issues.push("预览使用了 type=module 脚本，沙箱内相对模块可能无法加载");
+      }
+    }
+    return {
+      ok: hasContent,
+      issues: issues,
+      textLength: text.length,
+      visibleElements: visible,
+      media: media,
+      errors: errors.slice(-6)
+    };
+  }
+  function sendStatus() {
+    if (statusSent) return;
+    var result = inspectPreview();
+    if (result.ok) {
+      statusSent = true;
+      post({ type: "promptforge-preview-status", token: TOKEN, ok: true, metrics: result });
+      sendReady();
+      return;
+    }
+    var fatal = result.errors.some(function (item) {
+      return /SyntaxError|ReferenceError|TypeError|is not defined|Unexpected token|Failed to fetch/i.test(item);
+    });
+    if (Date.now() - startedAt < (fatal ? 1600 : 5600)) return;
+    statusSent = true;
+    post({
+      type: "promptforge-preview-status",
+      token: TOKEN,
+      ok: false,
+      issues: result.issues,
+      metrics: result
+    });
+  }
+  function scheduleStatus() {
+    if (statusSent) return;
+    clearTimeout(statusTimer);
+    statusTimer = setTimeout(sendStatus, 140);
   }
 
   function ensureSelectionStyle() {
@@ -3316,19 +3538,27 @@
   }, false);
 
   window.addEventListener("load", function () {
-    setTimeout(check, 120);
-    setTimeout(sendReady, 2600);
+    setTimeout(sendStatus, 200);
+    setTimeout(sendStatus, 1200);
+    setTimeout(sendStatus, 3000);
+    setTimeout(sendStatus, 5600);
+    setTimeout(sendStatus, 7000);
   });
   if (document.readyState === "complete") {
-    setTimeout(check, 120);
-    setTimeout(sendReady, 2600);
+    setTimeout(sendStatus, 200);
+    setTimeout(sendStatus, 1200);
+    setTimeout(sendStatus, 3000);
+    setTimeout(sendStatus, 5600);
+    setTimeout(sendStatus, 7000);
   }
   try {
-    new MutationObserver(check).observe(document.documentElement, {
+    new MutationObserver(scheduleStatus).observe(document.documentElement, {
       childList: true, subtree: true, characterData: true
     });
   } catch (e) {}
-  setTimeout(sendReady, 6000);
+  setTimeout(sendStatus, 900);
+  setTimeout(sendStatus, 2600);
+  setTimeout(sendStatus, 7000);
 })();
 __PF_SCRIPT_CLOSE__`.replace("__PF_SCRIPT_CLOSE__", "</" + "script>");
         if (/<\/body>/i.test(html)) {
@@ -3338,6 +3568,155 @@ __PF_SCRIPT_CLOSE__`.replace("__PF_SCRIPT_CLOSE__", "</" + "script>");
         }
         el.previewFrame.srcdoc = html;
         el.previewFrame.dataset.versionId = String(version.id);
+      }
+
+      function setPreviewLoadingState(mode, text) {
+        el.previewLoading.hidden = false;
+        el.previewLoading.classList.toggle("is-repair", mode === "repair");
+        el.previewLoading.classList.toggle("is-failed", mode === "failed");
+        if (el.previewLoadingText) el.previewLoadingText.textContent = text;
+        if (el.previewRetryBtn) el.previewRetryBtn.hidden = mode !== "failed";
+      }
+
+      function clearPreviewLoadingState() {
+        el.previewLoading.hidden = true;
+        el.previewLoading.classList.remove("is-repair", "is-failed");
+        if (el.previewLoadingText) el.previewLoadingText.textContent = "正在渲染预览…";
+        if (el.previewRetryBtn) el.previewRetryBtn.hidden = true;
+      }
+
+      function showPreviewRepairFailed(status) {
+        const issue = Array.isArray(status?.issues) && status.issues.length
+          ? status.issues[0]
+          : "预览页没有渲染出可见内容";
+        setPreviewLoadingState(
+          "failed",
+          `预览修复失败：${shortText(issue, 110)}。可点击“重新修复”再次尝试。`
+        );
+      }
+
+      async function waitForPreviewRepair(jobId, historyId, versionId) {
+        while (true) {
+          if (!state.detail || state.detail.id !== historyId
+              || state.previewCheck.versionId !== versionId) return;
+          const data = await api(`/api/jobs/${jobId}/`);
+          const job = data.job;
+          if (job.status === "failed") {
+            throw new Error(job.error || job.stage_message || "预览修复失败。");
+          }
+          if (job.status === "completed") {
+            const historyData = await api(`/api/history/${historyId}/`);
+            if (!state.detail || state.detail.id !== historyId) return;
+            state.detail = historyData.history;
+            const updated = state.detail.versions.find((item) => item.id === versionId);
+            if (!updated) throw new Error("修复后的版本不存在。");
+            state.versionId = updated.id;
+            state.sourceDraft = null;
+            state.sourcePath = null;
+            el.previewFrame.dataset.versionId = "";
+            renderEditor();
+            if (state.chat.open) renderChatHistory();
+            return;
+          }
+          setPreviewLoadingState(
+            "repair",
+            "首次生成的代码渲染失败，正在修复，请稍等"
+          );
+          await new Promise((resolve) => window.setTimeout(resolve, 1100));
+        }
+      }
+
+      async function startPreviewRepair(status) {
+        const version = currentVersion();
+        const detail = state.detail;
+        if (!version || !detail) return;
+        const check = state.previewCheck;
+        if (check.versionId !== version.id || check.repairing) return;
+        if (check.attempts >= 3) {
+          showPreviewRepairFailed(status);
+          return;
+        }
+        check.repairing = true;
+        check.attempts += 1;
+        check.pendingFailure = null;
+        check.lastFailure = status;
+        setPreviewLoadingState(
+          "repair",
+          "首次生成的代码渲染失败，正在修复，请稍等"
+        );
+        try {
+          const data = await api(
+            `/api/history/${detail.id}/versions/${version.id}/preview-repair/`,
+            {
+              method: "POST",
+              body: {
+                issues: Array.isArray(status?.issues) ? status.issues : [],
+                attempt: check.attempts,
+                client_id: getClientId(),
+              },
+            }
+          );
+          check.jobId = data.job.id;
+          await waitForPreviewRepair(data.job.id, detail.id, version.id);
+        } catch (error) {
+          if (state.previewCheck.versionId === version.id) {
+            showPreviewRepairFailed({ issues: [error.message || "修复请求失败。"] });
+          }
+        } finally {
+          if (state.previewCheck.versionId === version.id) {
+            state.previewCheck.repairing = false;
+            if (state.previewCheck.pendingFailure) {
+              const pending = state.previewCheck.pendingFailure;
+              state.previewCheck.pendingFailure = null;
+              window.setTimeout(() => startPreviewRepair(pending), 80);
+            }
+          }
+        }
+      }
+
+      function handlePreviewStatus(data) {
+        const version = currentVersion();
+        if (!version || String(state.previewVersionId) !== String(version.id)) return;
+        state.previewCheck.received = true;
+        window.clearTimeout(state.previewCheck.statusTimer);
+        state.previewCheck.statusTimer = null;
+        if (data.ok) {
+          clearPreviewLoadingState();
+          state.previewCheck.lastFailure = null;
+          state.previewCheck.pendingFailure = null;
+          state.previewCheck.attempts = 0;
+          if (state.chat.open) setPreviewSelection(true);
+          return;
+        }
+        const failure = {
+          issues: Array.isArray(data.issues) ? data.issues : [],
+          metrics: data.metrics || {},
+        };
+        state.previewCheck.lastFailure = failure;
+        if (state.previewCheck.repairing) {
+          state.previewCheck.pendingFailure = failure;
+          return;
+        }
+        if (state.view !== "preview" || state.sourceDraft?.dirty) {
+          state.previewCheck.pendingFailure = failure;
+          return;
+        }
+        startPreviewRepair(failure);
+      }
+
+      function retryPreviewRepair() {
+        const check = state.previewCheck;
+        check.attempts = 0;
+        check.repairing = false;
+        if (check.lastFailure) {
+          startPreviewRepair(check.lastFailure);
+          return;
+        }
+        const version = currentVersion();
+        if (version) {
+          el.previewFrame.dataset.versionId = "";
+          renderEditor();
+        }
       }
 
       function getVersionFiles(version) {
@@ -3816,6 +4195,11 @@ __PF_SCRIPT_CLOSE__`.replace("__PF_SCRIPT_CLOSE__", "</" + "script>");
         }
         state.view = nextView;
         renderEditor();
+        if (nextView === "preview" && state.previewCheck.pendingFailure) {
+          const failure = state.previewCheck.pendingFailure;
+          state.previewCheck.pendingFailure = null;
+          window.setTimeout(() => startPreviewRepair(failure), 60);
+        }
       }
 
       async function loadProject(historyId, preferredVersionId = null) {
@@ -3930,6 +4314,7 @@ __PF_SCRIPT_CLOSE__`.replace("__PF_SCRIPT_CLOSE__", "</" + "script>");
       }
 
       function taskTitleForJob(job) {
+        if (job.kind === "render_repair") return "正在修复预览渲染";
         if (job.status === "completed") return "项目生成完成";
         if (job.status === "failed") return "生成失败";
         if (job.mode === "backend" || job.project_type === "backend") return "全栈项目生成";
@@ -4760,12 +5145,19 @@ __PF_SCRIPT_CLOSE__`.replace("__PF_SCRIPT_CLOSE__", "</" + "script>");
           if (!link || state.chat.busy) return;
           selectVersion(Number(link.dataset.chatVersion));
         });
+        el.previewRetryBtn?.addEventListener("click", retryPreviewRepair);
         window.addEventListener("message", (event) => {
           const data = event.data;
           if (!data || event.source !== el.previewFrame.contentWindow) return;
           if (String(data.token) !== String(state.previewToken)) return;
+          if (data.type === "promptforge-preview-status") {
+            handlePreviewStatus(data);
+          }
           if (data.type === "promptforge-preview-ready") {
-            el.previewLoading.hidden = true;
+            state.previewCheck.received = true;
+            window.clearTimeout(state.previewCheck.statusTimer);
+            state.previewCheck.statusTimer = null;
+            clearPreviewLoadingState();
             if (state.chat.open) setPreviewSelection(true);
           }
           if (data.type === "promptforge-components-selected") {

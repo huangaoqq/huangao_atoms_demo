@@ -1,5 +1,6 @@
 import base64
 import json
+from unittest.mock import patch
 
 from django.test import TestCase
 
@@ -11,13 +12,18 @@ from .models import (
 )
 from .scoring import score_html
 from .views import (
+    _apply_preview_repair,
     _frontend_project_is_complete,
     _mock_frontend_project,
     _normalize_image_meta,
+    _normalize_preview_issues,
     _normalize_reference_image,
     _parse_project_bundle,
+    _preview_files_with_repair,
+    _preview_is_usable,
     _project_is_complete,
     _wants_frontend_only,
+    _wants_fullstack,
 )
 
 
@@ -203,6 +209,15 @@ class FrontendProjectTests(TestCase):
         self.assertTrue(_wants_frontend_only("纯前端页面，用 React"))
         self.assertFalse(_wants_frontend_only("生成一个完整的 Django 网站"))
 
+    def test_default_is_frontend_and_fullstack_is_explicit(self):
+        self.assertFalse(_wants_fullstack("做一个待办事项页面，支持新增和删除"))
+        self.assertFalse(_wants_fullstack("只生成前端代码，不要后端"))
+        self.assertTrue(_wants_fullstack("生成一个完整全栈任务管理系统"))
+        self.assertTrue(_wants_fullstack("做一个前后端分离的博客"))
+        self.assertTrue(_wants_fullstack("用 Django 和 PostgreSQL 做一个商城"))
+        self.assertTrue(_wants_fullstack("需要后端接口和数据库"))
+        self.assertFalse(_wants_fullstack("不需要后端，只要前端页面"))
+
     def test_mock_frontend_project_is_complete(self):
         project = _mock_frontend_project()
         self.assertTrue(_frontend_project_is_complete(project))
@@ -225,6 +240,124 @@ class FrontendProjectTests(TestCase):
             "preview_html": "<html></html>",
         }
         self.assertFalse(_frontend_project_is_complete(project))
+
+
+class GenerationTypeEndpointTests(TestCase):
+    @patch("generator.views.threading.Thread")
+    def test_start_job_defaults_to_frontend(self, _thread):
+        response = self.client.post(
+            "/api/jobs/start/",
+            data=json.dumps({"prompt": "做一个待办事项页面，支持新增和删除"}),
+            content_type="application/json",
+            HTTP_HOST="localhost",
+        )
+        self.assertEqual(response.status_code, 202)
+        job = GenerationJob.objects.latest("created_at")
+        self.assertEqual(job.project_type, "frontend")
+        self.assertEqual(job.state["bundle_mode"], "frontend")
+
+    @patch("generator.views.threading.Thread")
+    def test_start_job_fullstack_requires_explicit_request(self, _thread):
+        response = self.client.post(
+            "/api/jobs/start/",
+            data=json.dumps({"prompt": "生成一个带 Django 后端的全栈任务管理系统"}),
+            content_type="application/json",
+            HTTP_HOST="localhost",
+        )
+        self.assertEqual(response.status_code, 202)
+        job = GenerationJob.objects.latest("created_at")
+        self.assertEqual(job.project_type, "backend")
+        self.assertIsNone(job.state["bundle_mode"])
+
+
+class PreviewRepairTests(TestCase):
+    def _project(self):
+        history = GenerateHistory.objects.create(
+            prompt="preview repair test",
+            html_code="<html><body><div id='app'></div></body></html>",
+            project_type="frontend",
+            backend_label="原生 HTML/CSS/JavaScript",
+        )
+        version = GenerateVersion.objects.create(
+            history=history,
+            version_no=1,
+            html_code="<html><body><div id='app'></div></body></html>",
+            files=[
+                {"path": "index.html", "content": "<html><body><div id='app'></div></body></html>"},
+                {"path": "styles/app.css", "content": "body{color:red}"},
+            ],
+        )
+        return history, version
+
+    def test_preview_issue_list_is_bounded_and_has_default(self):
+        issues = _normalize_preview_issues(
+            ["JavaScript 错误：x"] * 3 + [str(index) for index in range(20)]
+        )
+        self.assertEqual(len(issues), 8)
+        self.assertEqual(issues[0], "JavaScript 错误：x")
+        self.assertTrue(_normalize_preview_issues([]))
+
+    def test_preview_repair_updates_files_in_place(self):
+        history, version = self._project()
+        fixed = "<html><body><h1>fixed preview</h1></body></html>"
+        files = _preview_files_with_repair(version.files, fixed)
+        self.assertEqual(files[0]["path"], "index.html")
+        self.assertEqual(files[0]["content"], version.files[0]["content"])
+        preview_file = next(item for item in files if item["path"] == "preview.html")
+        self.assertEqual(preview_file["content"], fixed)
+        self.assertTrue(
+            _preview_is_usable("<html><body><h1>fixed</h1></body></html>")
+        )
+        self.assertFalse(_preview_is_usable("<html><body><script>"))
+
+    def test_apply_preview_repair_does_not_create_a_version(self):
+        history, version = self._project()
+        fixed = "<html><body><h1>fixed preview</h1></body></html>"
+        updated_history, updated_version = _apply_preview_repair(
+            history, version, fixed
+        )
+        self.assertEqual(updated_history.html_code, fixed)
+        self.assertEqual(updated_version.html_code, fixed)
+        self.assertIn("预览修复", updated_version.note)
+        self.assertEqual(history.versions.count(), 1)
+        self.assertIn(
+            "preview.html",
+            [item["path"] for item in updated_version.files],
+        )
+
+    @patch("generator.views.threading.Thread")
+    def test_preview_repair_endpoint_queues_and_reuses_job(self, _thread):
+        history, version = self._project()
+        url = (
+            f"/api/history/{history.id}/versions/{version.id}/preview-repair/"
+        )
+        payload = {
+            "issues": ["页面没有可见内容"],
+            "attempt": 1,
+            "client_id": "repair-test",
+        }
+        first = self.client.post(
+            url,
+            data=json.dumps(payload),
+            content_type="application/json",
+            HTTP_HOST="localhost",
+        )
+        self.assertEqual(first.status_code, 202)
+        job = GenerationJob.objects.get(pk=first.json()["job"]["id"])
+        self.assertEqual(job.state["kind"], "render_repair")
+        self.assertEqual(job.state["target_history_id"], history.id)
+        self.assertEqual(job.state["target_version_id"], version.id)
+        self.assertIsNone(job.history_id)
+
+        second = self.client.post(
+            url,
+            data=json.dumps(payload),
+            content_type="application/json",
+            HTTP_HOST="localhost",
+        )
+        self.assertEqual(second.status_code, 202)
+        self.assertEqual(second.json()["job"]["id"], str(job.id))
+        self.assertEqual(GenerationJob.objects.count(), 1)
 
 
 class ReferenceImageTests(TestCase):

@@ -1,12 +1,13 @@
 # PromptForge · AI 应用生成工作台
 
-基于 Django 4.2 的 AI 应用生成工作台。用户输入需求或点击模板后进入独立生成工作台，实时查看生成阶段和模型处理进度；生成完成后可预览、查看源码、在线修改。未明确要求“只生成前端”时默认生成完整前后端网站应用（默认 Django）；明确指定前端-only 时只生成完整前端目录。用户可在需求中指定后端语言和框架，项目附带可独立部署的 DEPLOY.md。
+基于 Django 4.2 的 AI 应用生成工作台。用户输入需求或点击模板后进入独立生成工作台，实时查看生成阶段和模型处理进度；生成完成后可预览、查看源码、在线修改。默认生成完整前端项目目录；只有需求明确写明“全栈 / 前后端 / 需要后端 / 数据库 / 指定后端框架”时才生成完整前后端项目。所有项目都附带可独立部署的 DEPLOY.md。
 
 - **生成前选择模型模式**：点击「开始生成」或模板后弹出模式选择框，可用历史胜出率更高的单模型、另一个单模型，或 DeepSeek + 千问双模型赛马
 - **历史赛马统计与推荐**：弹窗汇总历史赛马项目双方胜场、胜率、平均分和逐项记录，并给胜出率更高的模型标记推荐；用户可接受推荐或改选
 - **后台生成任务**：离开工作台返回项目主页后生成继续执行，主页实时显示任务进度和完成状态
 - **参考图生成**：主页输入框可上传 JPG/PNG/WebP/GIF 参考图，自动压缩并提取尺寸/主色/亮度；优先用千问 `qwen3.8-flash` 做视觉分析，分析结果参与布局、配色和组件生成；视觉模型不可用时回退到前端元信息
-- **前端-only 模式**：需求包含「只生成前端 / 纯前端 / 不要后端 / 只写前端」等明确指令时，只生成 `index.html`、`src/`、`styles/`、`assets/`、依赖清单和 README/DEPLOY.md，不生成后端；目录树、源码、ZIP 和在线修改都按前端项目处理
+- **默认前端-only**：未明确要求全栈时，只生成 `index.html`、`src/`、`styles/`、`assets/`、依赖清单和 README/DEPLOY.md，不生成后端；需求明确包含“全栈 / 前后端 / 需要后端 / 数据库 / Django/Flask 等后端框架”时才生成完整全栈项目。目录树、源码、ZIP 和在线修改都会按项目类型处理
+- **预览渲染自检与自动修复**：每次生成/修改后在浏览器 iframe 内检测可见内容、元素尺寸、JS 错误、资源加载和脚本执行情况；发现白屏或渲染失败时，把根因提交给模型自动修复，修复期间预览区显示“首次生成的代码渲染失败，正在修复，请稍等”，修复后自动替换当前版本并重新检测，最多自动尝试 3 次，也可手动点“重新修复”
 - **在线修改使用优胜模型**：DeepSeek 方案显示 DP 机器人，千问方案显示 QW 机器人
 - **在线修改后台执行**：提交后离开工作台也会继续，主页任务栏显示“修改「项目名」vN”，完成后自动生成新版本并刷新项目列表
 - **源码在线编辑**：源码视图可直接编辑文件；离开源码、切到预览、切项目或打开在线修改时，如有未保存草稿会先询问“是否保留”，选择“是”直接更新当前版本（不新增版本）并按保存结果渲染预览，选择“否”恢复修改前状态；支持 Ctrl/⌘ + S 保存
@@ -307,6 +308,7 @@ python manage.py shell -c "from generator.models import GenerateHistory, Generat
 | POST | `/api/generate/stream/` | 兼容保留的 NDJSON 即时生成接口 |
 | POST | `/api/history/<id>/refine/` | 基于指定版本修改；传 `background: true` 创建后台修改任务并返回 202 任务 ID，否则同步返回新版本；支持 `target_context` / `target_label` |
 | POST | `/api/history/<id>/versions/<vid>/source/` | 将源码编辑直接保存到当前版本（不新增版本） |
+| POST | `/api/history/<id>/versions/<vid>/preview-repair/` | 浏览器检测到预览白屏/渲染失败后，创建后台修复任务并原地替换当前版本；同一目标已有修复任务时复用 |
 | GET | `/api/history/<id>/versions/<vid>/download/` | 下载 HTML 或全栈项目 ZIP |
 | POST | `/api/history/<id>/versions/<vid>/delete/` | 删除版本 |
 | POST | `/api/history/<id>/versions/<vid>/publish/` | 发布版本 |
@@ -320,10 +322,14 @@ python manage.py shell -c "from generator.models import GenerateHistory, Generat
 - 单模型模式遇到不完整包会使用完整的 Mock Django 项目兜底；赛马模式会优先在“结构完整”的候选方案中按预览评分选优，不会让只有两三个文件的高分预览胜出
 - 空的 `__init__.py` 等文件也会保留，下载 ZIP 和源码树不会再缺少后端模块
 
-### 前端-only 与参考图
+### 前端-only、全栈与预览自检
 
-- 需求包含明确前端-only 指令时，后台使用 `FRONTEND_SYSTEM_PROMPT` 和前端完整性校验；必须包含 HTML 入口、`src/` 等目录、至少两个前端源码/样式文件、README 和 DEPLOY.md，且不能出现 `manage.py`、Django settings、数据库依赖等后端文件
-- 前端-only 项目仍支持单模型/赛马、预览、源码树、在线修改、ZIP 下载和静态发布；Mock 兜底使用完整的前端目录而不是后端计算器项目
+- **默认前端-only**：`start_job` 只有命中明确的全栈/后端指令时才生成后端；单纯的“登录、待办、博客”等功能词不会自动切换到全栈
+- **显式全栈**：需求包含“全栈 / full-stack / 前后端 / 需要后端 / 数据库 / Django / Flask / FastAPI / Spring / Express / Node.js”等明确要求时，使用 `BACKEND_SYSTEM_PROMPT` 和完整项目完整性校验
+- 前端项目使用 `FRONTEND_SYSTEM_PROMPT`：必须包含 HTML 入口、`src/` 等目录、至少两个前端源码/样式文件、README 和 DEPLOY.md，且不能出现 `manage.py`、Django settings、数据库依赖等后端文件
+- 前端项目仍支持单模型/赛马、预览、源码树、在线修改、ZIP 下载和静态发布；Mock 兜底使用完整的前端目录而不是后端计算器项目
+- **预览自检**：iframe 加载后检测可见文本、可见元素尺寸、canvas/image 等媒体、加载占位、JS `error`/`unhandledrejection`、资源加载失败和 `type=module` 脚本；10 秒内没有任何渲染上报也会视为失败
+- **自动修复**：检测失败时调用 `preview-repair` 后台任务，把浏览器根因、当前项目文件和预览交给项目原模型修复；修复完成原地更新当前版本（不新增版本），客户端重新渲染并再次检测，最多自动 3 次；修复期间显示明确提示，失败后可手动重试
 - 参考图在浏览器端压缩到最大 1280px、JPEG，并提取尺寸、主色板、平均亮度；这些元信息随任务提交
 - 后台优先使用 `QWEN_VISION_MODEL`（默认 `qwen3.8-flash`）分析参考图的布局、配色、组件、字体和交互特征，再将描述注入同一份生成提示词；视觉模型不可用时使用前端元信息兜底
 - 参考图仅保存在任务记录中，不进入任务列表 payload；图片大小限制约 2.5MB，前端也会先压缩
@@ -376,7 +382,7 @@ python manage.py shell -c "from generator.models import GenerateHistory, Generat
 - 预览 iframe 和临时发布页处于沙箱化 opaque origin，`localStorage` 会抛出 `SecurityError`；系统会自动注入存储兜底，保证依赖本地存储的页面仍能正常初始化与交互
 - 已发布页面的存储兜底会把 `localStorage` / `sessionStorage` 镜像到 URL 的 `__pf_store` 查询参数（通过 `history.replaceState`），因此刷新、前进后退或收藏后可以恢复最高分等游戏状态；不授予同源权限，也不会读写主站 Cookie / localStorage。状态上限约 32KB，超出后仅保留当前页面内存状态
 - 生成页面只有在自身把状态写入 `localStorage` / `sessionStorage` 时才能被恢复；如果游戏代码没有保存棋盘等中间状态，刷新后仍会按代码逻辑重新开始
-- 所有新生成项目默认使用 Django 4.2，并按前后端 / 业务模块划分目录；用户指定的后端语言或框架优先。生成的 `DEPLOY.md` 说明如何独立安装、配置数据库和启动服务
+- 新项目默认生成完整前端目录；只有需求明确要求全栈/后端时才生成 Django 4.2 等后端项目，并按前后端 / 业务模块划分目录，用户指定的后端语言或框架优先。生成的 `DEPLOY.md` 说明如何独立安装、配置数据库和启动服务
 - 发布时仅将生成的静态 `PREVIEW_HTML` 部署为当前域名的临时路由；不会执行生成的后端代码。完整前后端项目请下载 ZIP 后按包内 `DEPLOY.md` 独立部署。取消发布会立即下线路由
 
 ## 阿里云 ECS 部署

@@ -32,6 +32,11 @@ urlpatterns = [
         name="save-version-source",
     ),
     path(
+        "api/history/<int:history_id>/versions/<int:version_id>/preview-repair/",
+        views.start_preview_repair,
+        name="start-preview-repair",
+    ),
+    path(
         "api/history/<int:history_id>/versions/<int:version_id>/delete/",
         views.delete_version,
         name="delete-version",
