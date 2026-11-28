@@ -1,3 +1,5 @@
+import base64
+import binascii
 import io
 import json
 import logging
@@ -33,6 +35,8 @@ SYSTEM_PROMPT = (
 MAX_PROMPT_LENGTH = 3000
 MAX_INSTRUCTION_LENGTH = 1000
 MAX_LLM_RESPONSE_BYTES = 2 * 1024 * 1024
+REFERENCE_IMAGE_MAX_BYTES = 2_500_000
+REFERENCE_IMAGE_MAX_CHARS = 3_500_000
 
 PROVIDERS = {
     "deepseek": {
@@ -612,6 +616,30 @@ BACKEND_SYSTEM_PROMPT = """你是资深全栈工程师。根据用户需求输�
 6. 每个 ===FILE: 相对路径=== 后必须在文件内容结束时立即输出 ===END_FILE===；不得把后续文件内容并入 requirements.txt 或任何单个文件。requirements.txt 只能包含依赖清单。
 7. PREVIEW_HTML 是用于当前平台预览的独立静态页，必须完整可交互。"""
 
+FRONTEND_SYSTEM_PROMPT = """你是资深前端工程师。根据用户需求输出成熟、可运行的完整前端项目源码。
+用户明确要求只生成前端代码：不要生成 Django/Flask/Node 等后端服务，不要生成数据库、接口服务或后端依赖。
+如果用户指定前端框架，必须使用指定框架；否则使用原生 HTML/CSS/JavaScript，确保无需构建即可直接打开。
+必须给出完整的前端目录结构，例如 index.html、src/、styles/、assets/、README.md、DEPLOY.md；
+如果使用 React/Vue/Vite 等框架，还必须包含 package.json、入口文件和运行说明。
+必须严格使用以下分段格式，不要输出解释，不要使用 Markdown 代码块围栏：
+===BACKEND===
+前端技术栈名称
+===FILES===
+===FILE: 相对路径===
+文件完整内容
+===END_FILE===
+===PREVIEW_HTML===
+可直接在浏览器打开的单文件前端预览，使用模拟数据，可交互
+===END_PREVIEW===
+要求：
+1. 只包含前端代码，不得出现后端目录、数据库模型或服务器代码。
+2. 文件必须完整可运行，index.html 能直接打开（或按 README 构建）。
+3. 前端资源必须分层到 src/、styles/、assets/、components/ 等目录，不能只有一个 HTML。
+4. 每个文件必须以 ===FILE: 相对路径=== 开始、===END_FILE=== 结束。
+5. 不得使用 TODO 或省略关键实现；文件路径不能包含 ..。
+6. 必须包含 README.md 和 DEPLOY.md 部署说明。
+7. PREVIEW_HTML 是用于当前平台预览的独立静态页，必须完整可交互。"""
+
 BACKEND_FRAMEWORKS = (
     ("Django", r"\bdjango\b"),
     ("Flask", r"\bflask\b"),
@@ -638,10 +666,33 @@ BACKEND_HINTS = re.compile(
     re.IGNORECASE,
 )
 FRONTEND_ONLY_HINTS = re.compile(
-    r"(纯前端|仅前端|只需要前端|不需要后端|无需后端|不用后端|不使用数据库|"
-    r"浏览器本地|本地存储|localstorage|local storage|no backend|frontend only)",
+    r"(纯前端|仅前端|只要前端|只需要前端|只生成前端|只写前端|只做前端|"
+    r"前端代码即可|前端项目即可|只输出前端|不生成后端|不要生成后端|"
+    r"不要写后端|不用写后端|不需要写后端|"
+    r"不需要后端|无需后端|不用后端|不要后端|"
+    r"不使用数据库|no backend|frontend[\s-]*only|frontend code only)",
     re.IGNORECASE,
 )
+FRONTEND_FRAMEWORKS = (
+    ("React", r"\breact\b"),
+    ("Vue", r"\bvue\b"),
+    ("Svelte", r"\bsvelte\b"),
+    ("Next.js", r"\bnext(?:\.js)?\b"),
+    ("Nuxt", r"\bnuxt\b"),
+    ("Vite", r"\bvite\b"),
+    ("原生 HTML/CSS/JavaScript", ""),
+)
+
+
+def _wants_frontend_only(prompt: str) -> bool:
+    return bool(FRONTEND_ONLY_HINTS.search(prompt))
+
+
+def _detect_frontend_label(prompt: str) -> str:
+    for label, pattern in FRONTEND_FRAMEWORKS:
+        if pattern and re.search(pattern, prompt, flags=re.IGNORECASE):
+            return label
+    return "原生 HTML/CSS/JavaScript"
 
 
 def _detect_backend_requirement(prompt: str) -> tuple[bool, str]:
@@ -664,7 +715,114 @@ def _backend_provider() -> str:
     return "deepseek"
 
 
-def _backend_prompt(prompt: str, detected_label: str) -> str:
+def _analyze_reference_image(image_data: str, job_id: str | None = None) -> str:
+    """Best-effort multimodal description of the uploaded reference image."""
+    if not image_data:
+        return ""
+    api_key = os.getenv(PROVIDERS["qwen"]["key_env"], "").strip()
+    if not api_key:
+        return ""
+    event = _job_cancel_event(job_id) if job_id else None
+    if event and event.is_set():
+        return ""
+    model = (
+        os.getenv("QWEN_VISION_MODEL", "").strip()
+        or "qwen3.8-flash"
+    )
+    try:
+        timeout = float(os.getenv("QWEN_VISION_TIMEOUT", "30"))
+    except ValueError:
+        timeout = 30.0
+    payload = {
+        "model": model,
+        "messages": [
+            {
+                "role": "system",
+                "content": "你是资深 UI/UX 设计师，负责把参考图转成可执行的网页视觉规范。",
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "请用中文分析这张网页/应用参考图：页面类型、布局结构、"
+                            "主色与辅助色、字体风格、组件形态、间距和交互特征。"
+                            "控制在 600 字内，只输出分析，不要输出代码。"
+                        ),
+                    },
+                    {"type": "image_url", "image_url": {"url": image_data}},
+                ],
+            },
+        ],
+        "temperature": 0.2,
+        "max_tokens": 900,
+        "stream": False,
+    }
+    request = urllib.request.Request(
+        _provider_endpoint("qwen"),
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            if job_id:
+                _register_http_response(job_id, response)
+            try:
+                body = response.read(MAX_LLM_RESPONSE_BYTES)
+            finally:
+                if job_id:
+                    _unregister_http_response(job_id, response)
+        if event and event.is_set():
+            return ""
+        data = json.loads(body.decode("utf-8"))
+        content = (data["choices"][0]["message"].get("content") or "").strip()
+        return content[:2400]
+    except Exception as exc:
+        if event and event.is_set():
+            return ""
+        logger.warning("Reference image analysis failed: %s", exc)
+        return ""
+
+
+def _reference_image_context(
+    image_data: str, meta: dict | None, job_id: str | None = None
+) -> str:
+    if not image_data:
+        return ""
+    parts = []
+    meta = meta or {}
+    width = meta.get("width")
+    height = meta.get("height")
+    if width and height:
+        parts.append(f"参考图尺寸：{width}×{height}px。")
+    palette = meta.get("palette")
+    if palette:
+        parts.append("参考图主色：" + "、".join(palette) + "。")
+    brightness = meta.get("brightness")
+    if isinstance(brightness, (int, float)):
+        parts.append(f"参考图平均亮度：{brightness:.2f}（0 为黑，1 为白）。")
+    description = _analyze_reference_image(image_data, job_id)
+    if description:
+        parts.append("参考图视觉分析：\n" + description)
+    if not parts:
+        parts.append("用户上传了参考图，请按其整体布局和视觉风格生成页面。")
+    return "\n".join(parts)
+
+
+def _backend_prompt(
+    prompt: str, detected_label: str, reference_context: str = ""
+) -> str:
+    reference_block = (
+        "\n参考图分析（请参考其布局、配色、组件、字体和视觉风格）：\n"
+        f"{reference_context}\n"
+        if reference_context else ""
+    )
     return (
         "用户需求：\n"
         f"{prompt}\n\n"
@@ -675,6 +833,29 @@ def _backend_prompt(prompt: str, detected_label: str) -> str:
         "数据库模型与迁移、路由、视图、模板/静态资源、测试或健康检查，以及详细的 DEPLOY.md 部署文档。\n"
         "不要只输出单文件 HTML。每个文件必须用 ===FILE: 相对路径=== 开始、===END_FILE=== 结束，"
         "不能把多个文件写进 requirements.txt。最后输出一个静态可交互 PREVIEW_HTML 预览。"
+        f"{reference_block}"
+    )
+
+
+def _frontend_bundle_prompt(
+    prompt: str, detected_label: str, reference_context: str = ""
+) -> str:
+    reference_block = (
+        "\n参考图分析（请参考其布局、配色、组件、字体和视觉风格）：\n"
+        f"{reference_context}\n"
+        if reference_context else ""
+    )
+    return (
+        "用户需求：\n"
+        f"{prompt}\n\n"
+        f"检测到的前端技术栈：{detected_label}\n"
+        "用户明确要求只生成前端代码，不要生成后端服务、数据库或服务端接口。\n"
+        "请生成完整的前端项目：index.html、src/、styles/、assets/、README.md、DEPLOY.md，"
+        "如果使用 React/Vue/Vite 等框架则包含 package.json 和入口文件。\n"
+        "所有前端资源必须分层到目录中，不能只输出一个 HTML。\n"
+        "每个文件必须用 ===FILE: 相对路径=== 开始、===END_FILE=== 结束。"
+        "最后输出一个静态可交互 PREVIEW_HTML 预览。"
+        f"{reference_block}"
     )
 
 
@@ -697,7 +878,10 @@ def _backend_timeout(provider: str | None = None) -> float:
 
 
 def _call_backend_model(
-    provider: str, prompt: str, job_id: str | None = None
+    provider: str,
+    prompt: str,
+    job_id: str | None = None,
+    system_prompt: str = BACKEND_SYSTEM_PROMPT,
 ) -> str | None:
     config = PROVIDERS[provider]
     api_key = os.getenv(config["key_env"], "").strip()
@@ -710,7 +894,7 @@ def _call_backend_model(
     payload = {
         "model": model,
         "messages": [
-            {"role": "system", "content": BACKEND_SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt},
         ],
         "temperature": 0.3,
@@ -1059,6 +1243,137 @@ PREVIEW_START_RE = re.compile(r"=+\s*PREVIEW_HTML\s*=+", flags=re.IGNORECASE)
 PREVIEW_END_RE = re.compile(r"=+\s*END_PREVIEW\s*=+", flags=re.IGNORECASE)
 
 
+def _mock_frontend_project() -> dict:
+    """A complete vanilla frontend project used when frontend-only generation fails."""
+    files = [
+        {
+            "path": "index.html",
+            "content": textwrap.dedent(
+                """\
+                <!doctype html>
+                <html lang="zh-CN">
+                <head>
+                  <meta charset="utf-8">
+                  <meta name="viewport" content="width=device-width, initial-scale=1">
+                  <title>前端 Mock 应用</title>
+                  <link rel="stylesheet" href="styles/app.css">
+                </head>
+                <body>
+                  <main class="app">
+                    <h1>前端 Mock 应用</h1>
+                    <p>这是前端生成失败时使用的完整前端项目兜底。</p>
+                    <button id="action" type="button">点击体验</button>
+                    <p id="output">等待操作</p>
+                  </main>
+                  <script src="src/components/app.js" defer></script>
+                  <script src="src/main.js" defer></script>
+                </body>
+                </html>
+                """
+            ),
+        },
+        {
+            "path": "styles/app.css",
+            "content": textwrap.dedent(
+                """\
+                :root { color-scheme: light; }
+                * { box-sizing: border-box; }
+                body { margin: 0; min-height: 100vh; display: grid; place-items: center;
+                  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+                  background: linear-gradient(135deg, #eef2ff, #ecfeff); color: #101828; }
+                .app { width: min(420px, calc(100vw - 32px)); padding: 28px;
+                  border-radius: 20px; background: #fff; box-shadow: 0 24px 60px rgba(30,41,59,.14); }
+                button { border: 0; border-radius: 10px; padding: 11px 16px;
+                  color: #fff; background: linear-gradient(135deg, #4f46e5, #0891b2); font-weight: 700; }
+                """
+            ),
+        },
+        {
+            "path": "src/main.js",
+            "content": textwrap.dedent(
+                """\
+                document.addEventListener("DOMContentLoaded", () => {
+                  const button = document.getElementById("action");
+                  const output = document.getElementById("output");
+                  let count = 0;
+                  button.addEventListener("click", () => {
+                    count += 1;
+                    output.textContent = window.PF.renderMessage(count);
+                  });
+                });
+                """
+            ),
+        },
+        {
+            "path": "src/components/app.js",
+            "content": textwrap.dedent(
+                """\
+                window.PF = window.PF || {};
+                window.PF.renderMessage = function (count) {
+                  return `已点击 ${count} 次，前端交互正常。`;
+                };
+                """
+            ),
+        },
+        {
+            "path": "assets/README.md",
+            "content": "# assets\n\nPlace frontend images, icons and fonts here.\n",
+        },
+        {
+            "path": "README.md",
+            "content": "# 前端项目\n\n这是一个完整的前端目录兜底项目。直接打开 `index.html`，或使用任意静态文件服务器。\n",
+        },
+        {
+            "path": "DEPLOY.md",
+            "content": textwrap.dedent(
+                """\
+                # 前端项目部署
+
+                ## 目录
+
+                - `index.html`：入口
+                - `styles/`：样式
+                - `src/`：脚本和组件
+                - `assets/`：静态资源
+
+                ## 本地预览
+
+                直接打开 `index.html`，或使用：
+
+                ```bash
+                python -m http.server 8000
+                ```
+
+                ## 静态部署
+
+                将整个目录上传到 Nginx、对象存储静态网站、Vercel、Netlify 或 GitHub Pages 即可。
+                这个项目不依赖后端服务。
+                """
+            ),
+        },
+    ]
+    files = _ensure_deployment_doc(files, "前端项目 · 原生 HTML/CSS/JavaScript")
+    preview_html = """<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>前端 Mock 应用</title>
+<style>
+body{margin:0;min-height:100vh;display:grid;place-items:center;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:linear-gradient(135deg,#eef2ff,#ecfeff);color:#101828}
+.app{width:min(420px,calc(100vw - 32px));padding:28px;border-radius:20px;background:#fff;box-shadow:0 24px 60px rgba(30,41,59,.14)}
+button{border:0;border-radius:10px;padding:11px 16px;color:#fff;background:linear-gradient(135deg,#4f46e5,#0891b2);font-weight:700}
+#output{margin-top:16px;color:#667085}
+</style></head>
+<body><main class="app"><h1>前端 Mock 应用</h1>
+<p>这是前端-only 生成失败时使用的完整前端项目兜底。</p>
+<button id="action" type="button">点击体验</button><p id="output">等待操作</p>
+</main><script>let count=0;document.getElementById('action').addEventListener('click',function(){count+=1;document.getElementById('output').textContent='已点击 '+count+' 次，前端交互正常。';});</script></body></html>"""
+    return {
+        "backend_label": "前端项目 · 原生 HTML/CSS/JavaScript (Mock)",
+        "files": files,
+        "preview_html": preview_html,
+    }
+
+
 def _parse_project_bundle(raw: str, fallback_label: str) -> dict | None:
     """Parse model output into files + preview, tolerating common deviations.
 
@@ -1198,6 +1513,107 @@ def _project_is_complete(project: dict | None) -> bool:
     return has_dependency and has_backend and has_frontend and has_deploy
 
 
+def _frontend_project_is_complete(project: dict | None) -> bool:
+    """Validate a complete frontend-only bundle with a real directory tree."""
+    if not project:
+        return False
+    files = project.get("files") or []
+    if len(files) < 6:
+        return False
+    paths = []
+    for item in files:
+        path = str(item.get("path", "")).replace("\\", "/").lower().strip("/")
+        if path:
+            paths.append(path)
+    if len(paths) < 6:
+        return False
+    basenames = {path.rsplit("/", 1)[-1] for path in paths}
+    backend_markers = {
+        "manage.py",
+        "wsgi.py",
+        "asgi.py",
+        "settings.py",
+        "requirements.txt",
+        "pom.xml",
+        "build.gradle",
+        "go.mod",
+        "artisan",
+        "server.js",
+        "app.py",
+        "main.py",
+    }
+    if basenames & backend_markers:
+        return False
+    if any(path.startswith(("backend/", "server/")) for path in paths):
+        return False
+    has_html = any(path.endswith((".html", ".htm")) for path in paths)
+    source_count = sum(
+        1
+        for path in paths
+        if path.endswith((".css", ".js", ".jsx", ".ts", ".tsx", ".vue", ".svelte"))
+    )
+    has_subdir = any("/" in path for path in paths)
+    has_deploy = any(path.rsplit("/", 1)[-1] == "deploy.md" for path in paths)
+    return has_html and source_count >= 2 and has_subdir and has_deploy
+
+
+REFERENCE_IMAGE_RE = re.compile(
+    r"^data:image/(png|jpe?g|webp|gif);base64,([A-Za-z0-9+/=\s]+)$",
+    flags=re.IGNORECASE,
+)
+
+
+def _normalize_reference_image(value) -> str:
+    if value in (None, ""):
+        return ""
+    if not isinstance(value, str):
+        raise ValueError("参考图格式不正确。")
+    match = REFERENCE_IMAGE_RE.match(value.strip())
+    if not match:
+        raise ValueError("参考图必须是 PNG/JPG/WebP/GIF 的 base64 数据。")
+    mime = match.group(1).lower()
+    if mime == "jpg":
+        mime = "jpeg"
+    payload = re.sub(r"\s+", "", match.group(2))
+    if len(payload) > REFERENCE_IMAGE_MAX_CHARS:
+        raise ValueError("参考图过大，请压缩后重试（上限约 2.5MB）。")
+    try:
+        decoded = base64.b64decode(payload, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("参考图 base64 数据无效。") from exc
+    if len(decoded) > REFERENCE_IMAGE_MAX_BYTES:
+        raise ValueError("参考图过大，请压缩后重试（上限约 2.5MB）。")
+    return f"data:image/{mime};base64,{payload}"
+
+
+def _normalize_image_meta(value) -> dict:
+    if not isinstance(value, dict):
+        return {}
+    meta = {}
+    width = value.get("width")
+    height = value.get("height")
+    if isinstance(width, (int, float)) and 0 < width <= 20000:
+        meta["width"] = int(width)
+    if isinstance(height, (int, float)) and 0 < height <= 20000:
+        meta["height"] = int(height)
+    brightness = value.get("brightness")
+    if isinstance(brightness, (int, float)) and 0 <= brightness <= 1:
+        meta["brightness"] = round(float(brightness), 3)
+    palette = value.get("palette")
+    if isinstance(palette, list):
+        cleaned = [
+            str(color)[:20]
+            for color in palette[:6]
+            if isinstance(color, str) and re.match(r"^#[0-9a-fA-F]{6}$", color)
+        ]
+        if cleaned:
+            meta["palette"] = cleaned
+    name = value.get("name")
+    if isinstance(name, str) and name.strip():
+        meta["name"] = re.sub(r"\s+", " ", name).strip()[:120]
+    return meta
+
+
 def _read_json(request) -> dict:
     try:
         data = json.loads((request.body or b"{}").decode("utf-8"))
@@ -1234,6 +1650,10 @@ def _version_payload(
         "note": version.note,
         "created_at": version.created_at.isoformat(),
         "is_mock": version.html_code.strip() == MOCK_HTML.strip(),
+        "base_version_id": version.base_version_id,
+        "base_version_no": (
+            version.base_version.version_no if version.base_version_id else None
+        ),
         "published": _publication_payload(publication, request) if publication else None,
     }
     if include_html:
@@ -1581,6 +2001,7 @@ def _job_payload(job: GenerationJob, request=None, include_history: bool = False
         "state": state,
         "project_type": job.project_type,
         "backend_label": job.backend_label,
+        "has_reference_image": bool(getattr(job, "reference_image", "")),
         "history_id": job.history_id,
         "target_history_id": state.get("target_history_id"),
         "target_version_id": state.get("target_version_id"),
@@ -1897,7 +2318,7 @@ def _run_frontend_job(job: GenerationJob) -> None:
     _save_job(job)
 
 
-def _run_backend_job(job: GenerationJob) -> None:
+def _run_backend_job(job: GenerationJob, frontend_only: bool = False) -> None:
     requested_mode = job.requested_mode if job.requested_mode in {"single", "race"} else "single"
     state = job.state if isinstance(job.state, dict) else {}
     if requested_mode == "race":
@@ -1911,7 +2332,10 @@ def _run_backend_job(job: GenerationJob) -> None:
         state["single_provider"] = selected_provider
     if not providers:
         providers = ["deepseek"]
-    detected_label = job.backend_label or "Django 4.2 + PostgreSQL"
+    detected_label = job.backend_label or (
+        "原生 HTML/CSS/JavaScript" if frontend_only else "Django 4.2 + PostgreSQL"
+    )
+    project_kind = "前端项目" if frontend_only else "全栈项目"
     state["order"] = providers
     state["providers"] = {
         provider: {
@@ -1928,32 +2352,79 @@ def _run_backend_job(job: GenerationJob) -> None:
     state["stages"] = []
     state["used_mock"] = False
     state["race"] = None
-    _job_stage(state, "prepare", "需求分析", "正在准备完整的前后端项目生成")
+    reference_image = getattr(job, "reference_image", "") or ""
+    image_meta = state.get("reference_image_meta") or {}
+    state["has_reference_image"] = bool(reference_image)
     _job_stage(
         state,
-        "backend",
-        "全栈项目生成",
-        f"正在生成 {detected_label} 项目目录、后端模块和前端预览",
+        "prepare",
+        "需求分析",
+        f"正在准备{'前端' if frontend_only else '前后端'}项目生成",
     )
+    if reference_image:
+        _job_stage(
+            state,
+            "image",
+            "参考图分析",
+            "正在解析参考图配色、布局与组件",
+        )
+    else:
+        _job_stage(
+            state,
+            "backend",
+            f"{project_kind}生成",
+            f"正在生成 {detected_label} 项目目录和前端预览",
+        )
     job.state = state
     job.mode = requested_mode
-    job.project_type = "backend"
+    job.project_type = "frontend" if frontend_only else "backend"
     job.status = GenerationJob.STATUS_RUNNING
-    job.progress = 12
-    job.stage_title = "全栈项目生成"
-    job.stage_message = f"正在生成 {detected_label} 项目目录、后端模块和前端预览"
+    job.progress = 8 if reference_image else 12
+    job.stage_title = "参考图分析" if reference_image else f"{project_kind}生成"
+    job.stage_message = (
+        "正在解析参考图的视觉风格"
+        if reference_image
+        else f"正在生成 {detected_label} 项目目录和前端预览"
+    )
     _save_job(job)
 
+    reference_context = ""
+    if reference_image:
+        _ensure_job_active(job.pk)
+        reference_context = _reference_image_context(
+            reference_image, image_meta, job_id=str(job.id)
+        )
+        _ensure_job_active(job.pk)
+        _job_stage(
+            state,
+            "backend",
+            f"{project_kind}生成",
+            f"正在生成 {detected_label} 项目目录和前端预览",
+        )
+        job.state = state
+        job.progress = max(job.progress, 12)
+        job.stage_title = f"{project_kind}生成"
+        job.stage_message = f"正在生成 {detected_label} 项目目录和前端预览"
+        _save_job(job)
+
     events: queue.Queue = queue.Queue()
-    prompt_text = _backend_prompt(job.prompt, detected_label)
+    prompt_text = (
+        _frontend_bundle_prompt(job.prompt, detected_label, reference_context)
+        if frontend_only
+        else _backend_prompt(job.prompt, detected_label, reference_context)
+    )
+    system_prompt = FRONTEND_SYSTEM_PROMPT if frontend_only else BACKEND_SYSTEM_PROMPT
 
     def worker(provider: str) -> None:
         try:
             content = _call_backend_model(
-                provider, prompt_text, job_id=str(job.id)
+                provider,
+                prompt_text,
+                job_id=str(job.id),
+                system_prompt=system_prompt,
             )
         except Exception:
-            logger.exception("Background fullstack call failed for %s.", provider)
+            logger.exception("Background project-bundle call failed for %s.", provider)
             content = None
         events.put((provider, content))
 
@@ -1979,7 +2450,7 @@ def _run_backend_job(job: GenerationJob) -> None:
             for provider_key in pending:
                 provider_state = state["providers"][provider_key]
                 provider_state["message"] = _provider_working_message(
-                    elapsed, backend=True
+                    elapsed, backend=not frontend_only
                 )
             job.progress = max(
                 job.progress,
@@ -2015,7 +2486,12 @@ def _run_backend_job(job: GenerationJob) -> None:
         raw_content = contents.get(provider) or ""
         parsed = _parse_project_bundle(raw_content, detected_label)
         provider_state = state["providers"][provider]
-        if parsed and _project_is_complete(parsed):
+        is_complete = (
+            _frontend_project_is_complete(parsed)
+            if frontend_only
+            else _project_is_complete(parsed)
+        )
+        if parsed and is_complete:
             parsed_projects[provider] = parsed
             provider_state["status"] = "done"
             provider_state["chars"] = sum(
@@ -2080,8 +2556,13 @@ def _run_backend_job(job: GenerationJob) -> None:
         winner_provider = (
             winner_model["provider"] if winner_model else providers[0]
         )
-        winner_project = parsed_projects.get(winner_provider) or _mock_django_project()
+        fallback_project = (
+            _mock_frontend_project() if frontend_only else _mock_django_project()
+        )
+        winner_project = parsed_projects.get(winner_provider) or fallback_project
         note = _race_note(models, winner_model, tied)
+        if frontend_only:
+            note = "前端项目 · " + note
         used_mock = any(model["is_mock"] for model in models)
         state["race"] = {
             "models": models,
@@ -2090,19 +2571,37 @@ def _run_backend_job(job: GenerationJob) -> None:
         }
     else:
         winner_provider = providers[0]
-        winner_project = parsed_projects.get(winner_provider) or _mock_django_project()
-        used_mock = winner_provider not in parsed_projects
-        note = (
-            f"全栈项目 · {winner_project['backend_label']}"
-            if not used_mock
-            else "全栈项目 · Mock Django 兜底"
+        fallback_project = (
+            _mock_frontend_project() if frontend_only else _mock_django_project()
         )
+        winner_project = parsed_projects.get(winner_provider) or fallback_project
+        used_mock = winner_provider not in parsed_projects
+        if frontend_only:
+            note = (
+                f"前端项目 · {winner_project['backend_label']}"
+                if not used_mock
+                else "前端项目 · Mock 前端兜底"
+            )
+        else:
+            note = (
+                f"全栈项目 · {winner_project['backend_label']}"
+                if not used_mock
+                else "全栈项目 · Mock Django 兜底"
+            )
         state["race"] = None
 
-    _job_stage(state, "save", "保存项目", "正在写入完整项目文件并创建首个版本")
+    if reference_image:
+        note += " · 含参考图"
+
+    _job_stage(
+        state,
+        "save",
+        "保存项目",
+        f"正在写入完整{project_kind}文件并创建首个版本",
+    )
     job.progress = 96
     job.stage_title = "保存项目"
-    job.stage_message = "正在写入完整项目文件并创建首个版本"
+    job.stage_message = f"正在写入完整{project_kind}文件并创建首个版本"
     job.state = state
     _save_job(job)
     _ensure_job_active(job.pk)
@@ -2113,7 +2612,7 @@ def _run_backend_job(job: GenerationJob) -> None:
         note,
         provider=winner_provider,
         files=winner_project["files"],
-        project_type="backend",
+        project_type="frontend" if frontend_only else "backend",
         backend_label=winner_project["backend_label"],
     )
     try:
@@ -2124,8 +2623,8 @@ def _run_backend_job(job: GenerationJob) -> None:
         job.status = GenerationJob.STATUS_COMPLETED
         job.progress = 100
         job.stage_title = "生成完成"
-        job.stage_message = "完整项目已保存，可查看目录源码或下载 ZIP"
-        job.project_type = "backend"
+        job.stage_message = f"完整{project_kind}已保存，可查看目录源码或下载 ZIP"
+        job.project_type = "frontend" if frontend_only else "backend"
         job.backend_label = winner_project["backend_label"]
         job.state = state
         _save_job(job)
@@ -2141,6 +2640,7 @@ def _create_refine_version(
     note: str,
     files: list | None = None,
     backend_label: str | None = None,
+    base_version: GenerateVersion | None = None,
 ) -> tuple[GenerateHistory, GenerateVersion]:
     with transaction.atomic():
         locked = GenerateHistory.objects.select_for_update().get(pk=history.pk)
@@ -2151,6 +2651,7 @@ def _create_refine_version(
             html_code=html_code,
             note=note,
             files=files or [],
+            base_version=base_version,
         )
         locked.html_code = html_code
         fields = ["html_code"]
@@ -2199,17 +2700,22 @@ def _run_refine_job(job: GenerationJob) -> None:
     note = f"{target_label}｜{instruction}" if target_label else instruction
     base_html = _repair_babel_preview(base_version.html_code or "")
     base_files = base_version.files or []
-    if not base_files and history.project_type == "backend":
+    if not base_files and history.project_type in {"backend", "frontend"}:
         latest = history.versions.order_by("-version_no").first()
         base_files = latest.files if latest else []
-    use_backend = history.project_type == "backend" and bool(base_files)
+    use_bundle = history.project_type in {"backend", "frontend"} and bool(base_files)
+    frontend_bundle = use_bundle and history.project_type == "frontend"
     provider = (
         history.model_provider if history.model_provider in PROVIDERS else "deepseek"
     )
     provider_config = PROVIDERS[provider]
     model_label = provider_config["label"]
 
-    if use_backend:
+    if frontend_bundle:
+        model_prompt = _frontend_refine_prompt(
+            history.prompt, base_files, base_html, instruction, target_context
+        )
+    elif use_bundle:
         model_prompt = _backend_refine_prompt(
             history.prompt, base_files, base_html, instruction, target_context
         )
@@ -2256,9 +2762,16 @@ def _run_refine_job(job: GenerationJob) -> None:
 
     def worker() -> None:
         try:
-            if use_backend:
+            if use_bundle:
                 result = _call_backend_model(
-                    provider, model_prompt, job_id=str(job.id)
+                    provider,
+                    model_prompt,
+                    job_id=str(job.id),
+                    system_prompt=(
+                        FRONTEND_SYSTEM_PROMPT
+                        if frontend_bundle
+                        else BACKEND_SYSTEM_PROMPT
+                    ),
                 )
             else:
                 result = _call_model(provider, model_prompt)
@@ -2276,7 +2789,7 @@ def _run_refine_job(job: GenerationJob) -> None:
     started_at = time.monotonic()
     last_save = time.monotonic()
     max_seconds = (
-        _backend_timeout(provider) if use_backend else _provider_timeout(provider)
+        _backend_timeout(provider) if use_bundle else _provider_timeout(provider)
     )
     result = None
     while True:
@@ -2315,11 +2828,16 @@ def _run_refine_job(job: GenerationJob) -> None:
     previous_backend = history.backend_label
     created_version = None
     try:
-        if use_backend:
+        if use_bundle:
             parsed = _parse_project_bundle(
-                result, history.backend_label or "Django"
+                result, history.backend_label or "前端项目"
             )
-            if not parsed:
+            is_complete = (
+                _frontend_project_is_complete(parsed)
+                if frontend_bundle
+                else _project_is_complete(parsed)
+            )
+            if not parsed or not is_complete:
                 raise RuntimeError("模型返回的项目文件不完整，未生成新版本。")
             history, created_version = _create_refine_version(
                 history,
@@ -2327,6 +2845,7 @@ def _run_refine_job(job: GenerationJob) -> None:
                 note,
                 files=parsed["files"],
                 backend_label=parsed["backend_label"],
+                base_version=base_version,
             )
             used_mock = False
         else:
@@ -2334,7 +2853,7 @@ def _run_refine_job(job: GenerationJob) -> None:
             if not html_code:
                 raise RuntimeError("模型返回的页面为空，未生成新版本。")
             history, created_version = _create_refine_version(
-                history, html_code, note
+                history, html_code, note, base_version=base_version
             )
 
         _ensure_job_active(job.pk)
@@ -2398,6 +2917,8 @@ def _run_generation_job(job_id: str) -> None:
             _run_refine_job(job)
         elif job.project_type == "backend":
             _run_backend_job(job)
+        elif state.get("bundle_mode") == "frontend":
+            _run_backend_job(job, frontend_only=True)
         else:
             _run_frontend_job(job)
     except JobCancelled:
@@ -2445,13 +2966,23 @@ def start_job(request):
     if len(prompt) > MAX_PROMPT_LENGTH:
         return _error(f"提示词不能超过 {MAX_PROMPT_LENGTH} 个字符。")
 
+    try:
+        reference_image = _normalize_reference_image(data.get("image_data"))
+        image_meta = _normalize_image_meta(data.get("image_meta"))
+    except ValueError as exc:
+        return _error(str(exc))
+
     requested_mode = data.get("mode", "single")
     if requested_mode not in {"single", "race"}:
         return _error("不支持的生成模式。")
 
     client_id = _normalize_client_id(data.get("client_id"))
-    _, detected_label = _detect_backend_requirement(prompt)
-    backend_label = detected_label or "Django 4.2 + PostgreSQL"
+    frontend_only = _wants_frontend_only(prompt)
+    if frontend_only:
+        backend_label = _detect_frontend_label(prompt)
+    else:
+        _, detected_label = _detect_backend_requirement(prompt)
+        backend_label = detected_label or "Django 4.2 + PostgreSQL"
     requested_provider = data.get("provider", "")
     requested_provider = (
         requested_provider.strip()
@@ -2468,6 +2999,9 @@ def start_job(request):
         providers = [selected_provider]
     initial_state = {
         "mode": requested_mode,
+        "bundle_mode": "frontend" if frontend_only else None,
+        "has_reference_image": bool(reference_image),
+        "reference_image_meta": image_meta,
         "single_provider": selected_provider,
         "order": providers,
         "providers": {
@@ -2486,7 +3020,19 @@ def start_job(request):
             {
                 "key": "prepare",
                 "title": "解析需求",
-                "message": "任务已进入后台队列，将生成完整前后端项目",
+                "message": (
+                    (
+                        "任务已进入后台队列，将结合参考图生成前端项目"
+                        if frontend_only
+                        else "任务已进入后台队列，将结合参考图生成完整前后端项目"
+                    )
+                    if reference_image
+                    else (
+                        "任务已进入后台队列，将只生成前端项目"
+                        if frontend_only
+                        else "任务已进入后台队列，将生成完整前后端项目"
+                    )
+                ),
                 "status": "active",
             }
         ],
@@ -2496,6 +3042,7 @@ def start_job(request):
     job = GenerationJob.objects.create(
         client_id=client_id,
         prompt=prompt,
+        reference_image=reference_image,
         requested_mode=requested_mode,
         mode=requested_mode,
         status=GenerationJob.STATUS_QUEUED,
@@ -2503,7 +3050,7 @@ def start_job(request):
         stage_title="任务排队",
         stage_message="已提交后台生成，可安全离开当前页面",
         state=initial_state,
-        project_type="backend",
+        project_type="frontend" if frontend_only else "backend",
         backend_label=backend_label,
     )
     thread = threading.Thread(
@@ -3088,27 +3635,44 @@ def refine(request, history_id: int):
         base_version.html_code if base_version else history.html_code
     )
     base_files = base_version.files if base_version else []
-    if not base_files and history.project_type == "backend":
+    if not base_files and history.project_type in {"backend", "frontend"}:
         latest = history.versions.order_by("-version_no").first()
         base_files = latest.files if latest else []
     note = f"{target_label}｜{instruction}" if target_label else instruction
+    frontend_bundle = history.project_type == "frontend" and bool(base_files)
+    use_bundle = history.project_type in {"backend", "frontend"} and bool(base_files)
 
-    if history.project_type == "backend" and base_files:
-        content = _call_backend_model(
-            provider,
-            _backend_refine_prompt(
+    if use_bundle:
+        if frontend_bundle:
+            model_prompt = _frontend_refine_prompt(
                 history.prompt, base_files, base_html, instruction, target_context
-            ),
+            )
+            system_prompt = FRONTEND_SYSTEM_PROMPT
+        else:
+            model_prompt = _backend_refine_prompt(
+                history.prompt, base_files, base_html, instruction, target_context
+            )
+            system_prompt = BACKEND_SYSTEM_PROMPT
+        content = _call_backend_model(
+            provider, model_prompt, system_prompt=system_prompt
         )
-        parsed = _parse_project_bundle(content or "", history.backend_label or "Django")
-        if not parsed:
-            return _error("后端项目修改失败，请保留当前版本后重试。", 502)
+        parsed = _parse_project_bundle(
+            content or "", history.backend_label or "项目"
+        )
+        is_complete = (
+            _frontend_project_is_complete(parsed)
+            if frontend_bundle
+            else _project_is_complete(parsed)
+        )
+        if not parsed or not is_complete:
+            return _error("项目修改失败，模型返回的文件不完整，请保留当前版本后重试。", 502)
         history = _create_backend_version(
             history,
             parsed["files"],
             parsed["preview_html"],
             note,
             parsed["backend_label"],
+            base_version=base_version,
         )
         return JsonResponse(
             {
@@ -3132,6 +3696,7 @@ def refine(request, history_id: int):
             version_no=last_no + 1,
             html_code=html_code,
             note=note,
+            base_version=base_version,
         )
         locked.html_code = html_code
         locked.save(update_fields=["html_code"])
@@ -3178,12 +3743,43 @@ def _backend_refine_prompt(
     )
 
 
+def _frontend_refine_prompt(
+    prompt: str,
+    files: list,
+    preview_html: str,
+    instruction: str,
+    target_context: str = "",
+) -> str:
+    file_blocks = "\n".join(
+        f"===FILE: {item.get('path', '')}===\n{item.get('content', '')}\n===END_FILE==="
+        for item in files
+    )
+    target_block = (
+        f"\n本次修改优先针对以下组件/局部：\n{target_context}\n"
+        if target_context else ""
+    )
+    return (
+        "用户前端项目需求：\n"
+        f"{prompt}\n\n"
+        "当前前端项目文件：\n"
+        f"{file_blocks}\n\n"
+        "当前静态预览：\n===PREVIEW_HTML===\n"
+        f"{preview_html}\n"
+        "===END_PREVIEW===\n\n"
+        f"用户修改要求：{instruction}\n"
+        f"{target_block}\n"
+        "请只更新前端代码，保持原有前端技术栈和目录结构，不要引入后端、数据库或服务器代码；"
+        "输出修改后的完整前端文件包和更新后的 PREVIEW_HTML，必须使用同样的分段格式。"
+    )
+
+
 def _create_backend_version(
     history: GenerateHistory,
     files: list,
     preview_html: str,
     note: str,
     backend_label: str,
+    base_version: GenerateVersion | None = None,
 ) -> GenerateHistory:
     with transaction.atomic():
         locked = GenerateHistory.objects.select_for_update().get(pk=history.pk)
@@ -3194,6 +3790,7 @@ def _create_backend_version(
             html_code=preview_html,
             note=note,
             files=files,
+            base_version=base_version,
         )
         locked.html_code = preview_html
         locked.backend_label = backend_label
@@ -3288,6 +3885,80 @@ def delete_version(request, history_id: int, version_id: int):
             "deleted": True,
             "history_deleted": False,
             "history": _history_payload(updated, request=request),
+        }
+    )
+
+
+def _normalize_source_files(value) -> list[dict]:
+    if not isinstance(value, list) or not value:
+        raise ValueError("源码文件列表不能为空。")
+    files = []
+    seen = set()
+    total_size = 0
+    for item in value[:100]:
+        if not isinstance(item, dict):
+            raise ValueError("源码文件格式不正确。")
+        path = _safe_project_path(str(item.get("path", "")))
+        content = item.get("content")
+        if not path or path in seen or not isinstance(content, str):
+            raise ValueError("源码文件路径或内容不正确。")
+        if path == "preview.html":
+            continue
+        total_size += len(content)
+        if total_size > 4 * 1024 * 1024:
+            raise ValueError("源码总大小超过 4MB，请减少文件内容。")
+        seen.add(path)
+        files.append({"path": path, "content": content})
+    if not files:
+        raise ValueError("源码文件列表不能为空。")
+    return files
+
+
+@require_POST
+def save_version_source(request, history_id: int, version_id: int):
+    try:
+        data = _read_json(request)
+        files = _normalize_source_files(data.get("files"))
+        html_code = data.get("html_code", "")
+        if not isinstance(html_code, str) or len(html_code) > 4 * 1024 * 1024:
+            return _error("预览 HTML 格式不正确或超过 4MB。")
+    except ValueError as exc:
+        return _error(str(exc))
+
+    version = get_object_or_404(
+        GenerateVersion, pk=version_id, history_id=history_id
+    )
+    history = version.history
+    if not html_code:
+        html_code = version.html_code
+    version.files = files
+    version.html_code = html_code
+    version.save(update_fields=["files", "html_code"])
+    latest_id = history.versions.order_by("-version_no").values_list("id", flat=True).first()
+    if latest_id == version.id:
+        history.html_code = html_code
+        history.save(update_fields=["html_code"])
+    return JsonResponse(
+        {
+            "version": _version_payload(version, include_html=True, request=request),
+            "history_html_updated": latest_id == version.id,
+        }
+    )
+
+
+@require_POST
+def delete_history(request, history_id: int):
+    history = get_object_or_404(GenerateHistory, pk=history_id)
+    version_count = history.versions.count()
+    published_count = PublishedPage.objects.filter(
+        version__history_id=history_id
+    ).count()
+    history.delete()
+    return JsonResponse(
+        {
+            "deleted": True,
+            "versions_deleted": version_count,
+            "published_deleted": published_count,
         }
     )
 

@@ -33,9 +33,20 @@
       margin: 0; min-height: 100vh; color: var(--ink);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
       background:
-        radial-gradient(circle at 6% -4%, rgba(79, 70, 229, .11), transparent 30rem),
-        radial-gradient(circle at 96% 8%, rgba(14, 116, 144, .08), transparent 26rem),
-        var(--bg);
+        radial-gradient(ellipse at 8% -8%, rgba(99, 102, 241, .29), transparent 34rem),
+        radial-gradient(ellipse at 98% 2%, rgba(6, 182, 212, .23), transparent 30rem),
+        radial-gradient(ellipse at -4% 100%, rgba(217, 70, 239, .15), transparent 32rem),
+        radial-gradient(ellipse at 100% 92%, rgba(251, 191, 36, .14), transparent 30rem),
+        radial-gradient(ellipse at 52% 48%, rgba(139, 92, 246, .10), transparent 38rem),
+        linear-gradient(135deg, #f4f0ff 0%, #eaf3ff 35%, #ecfdf9 68%, #fff7e8 100%);
+      background-attachment: fixed;
+    }
+    body::before {
+      content: ""; position: fixed; inset: 0; pointer-events: none;
+      background-image: radial-gradient(rgba(79, 70, 229, .13) .7px, transparent .7px);
+      background-size: 22px 22px; opacity: .32;
+      mask-image: linear-gradient(180deg, #000 0%, transparent 72%);
+      -webkit-mask-image: linear-gradient(180deg, #000 0%, transparent 72%);
     }
     button, input, textarea, select { font: inherit; }
     button { cursor: pointer; }
@@ -158,6 +169,37 @@
       color: var(--ink); font-size: 13.5px; line-height: 1.7;
     }
     #promptInput::placeholder { color: #98a2b3; }
+    .prompt-tools {
+      display: flex; align-items: center; gap: 9px; padding: 0 9px 8px;
+      border-top: 1px solid #f2f4f7;
+    }
+    .attach-btn {
+      display: inline-flex; align-items: center; gap: 5px; border: 1px solid #dbe3ff;
+      border-radius: 7px; padding: 4px 7px; background: #f8faff; color: var(--brand-deep);
+      font-size: 9px; font-weight: 700; transition: background .15s, border-color .15s;
+    }
+    .attach-btn:hover { border-color: #a5b4fc; background: #eef2ff; }
+    .attach-icon { font-size: 11px; line-height: 1; font-weight: 800; }
+    .attach-hint { color: var(--soft); font-size: 8.5px; }
+    .image-preview {
+      display: flex; align-items: center; gap: 9px; margin: 0 9px 9px; padding: 7px;
+      border: 1px solid #dbe3ff; border-radius: 9px; background: #f8faff;
+    }
+    .image-preview img {
+      width: 46px; height: 46px; flex: none; object-fit: cover; border-radius: 7px;
+      border: 1px solid #c7d2fe; background: #fff;
+    }
+    .image-preview-copy { min-width: 0; flex: 1; }
+    .image-preview-copy strong {
+      display: block; color: #344054; font-size: 9.5px; line-height: 1.4;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .image-preview-copy span { display: block; margin-top: 2px; color: var(--soft); font-size: 8px; }
+    .image-remove {
+      flex: none; width: 23px; height: 23px; border: 1px solid #fecdca; border-radius: 6px;
+      background: #fff; color: var(--danger); font-size: 14px; line-height: 1;
+    }
+    .image-remove:hover { background: #fff6f5; }
     .form-foot { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 12px; }
     .form-hint { color: var(--soft); font-size: 11px; line-height: 1.5; }
     .generate-btn { min-width: 142px; }
@@ -202,6 +244,25 @@
     .job-delete:hover { border-color: #fda29b; color: var(--danger); background: #fff6f5; }
     .job-delete:disabled { opacity: .55; cursor: wait; }
     .job-error { color: var(--danger); font-size: 8.5px; line-height: 1.5; margin-top: 5px; }
+
+    .project-context-menu {
+      position: fixed; z-index: 130; width: min(260px, calc(100vw - 20px));
+      padding: 6px; border-radius: 11px; border: 1px solid var(--line);
+      background: rgba(255,255,255,.98); box-shadow: 0 18px 50px rgba(16,24,40,.22);
+      backdrop-filter: blur(12px); animation: modalIn .14s ease;
+    }
+    .project-context-title {
+      padding: 6px 8px 5px; color: var(--soft); font-size: 8px; line-height: 1.4;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .project-context-item {
+      display: flex; width: 100%; align-items: center; gap: 8px;
+      border: 0; border-radius: 8px; padding: 8px; background: transparent;
+      color: var(--danger); font-size: 10px; font-weight: 700; text-align: left;
+    }
+    .project-context-item:hover { background: #fff6f5; }
+    .project-context-item small { display: block; margin-top: 2px; color: var(--soft); font-size: 8px; font-weight: 500; }
+    .project-context-icon { flex: none; width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; background: #fee4e2; color: var(--danger); font-size: 12px; }
 
     .home-grid {
       display: grid; grid-template-columns: minmax(0, 1.16fr) minmax(350px, .84fr);
@@ -504,6 +565,13 @@
     .side-list-head strong { font-size: 10px; color: #475467; }
     .side-list-head span { color: var(--soft); font-size: 8.5px; }
     .side-version-list { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 5px; }
+    .side-version-node { position: relative; }
+    .side-version-node.is-child {
+      margin: 4px 0 0 12px; padding-left: 7px; border-left: 1px solid #e4e7ec;
+    }
+    .side-version-node.is-child::before {
+      content: ""; position: absolute; left: 0; top: 19px; width: 7px; height: 1px; background: #e4e7ec;
+    }
     .side-version {
       width: 100%; display: flex; align-items: center; gap: 8px; padding: 8px;
       border: 1px solid transparent; border-radius: 8px; background: transparent;
@@ -577,6 +645,9 @@
     }
     .preview-view, .source-view { height: 100%; min-height: 0; }
     .preview-view { position: relative; background: #fff; }
+    .preview-view.is-concealed {
+      position: absolute; inset: 0; visibility: hidden; pointer-events: none;
+    }
     #previewFrame { display: block; width: 100%; height: 100%; border: 0; background: #fff; }
     .preview-loading {
       position: absolute; inset: 0; z-index: 3; display: flex; flex-direction: column;
@@ -619,12 +690,35 @@
     .file-count { margin-left: auto; color: #475569; font-size: 7px; }
     .source-code-pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
     .source-path {
-      flex: none; padding: 8px 14px; border-bottom: 1px solid #1f2937;
-      background: #111827; color: #94a3b8; font-family: var(--mono); font-size: 9px;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      flex: none; display: flex; align-items: center; gap: 8px; padding: 7px 12px;
+      border-bottom: 1px solid #1f2937; background: #111827;
+      color: #94a3b8; font-family: var(--mono); font-size: 9px;
     }
-    .source-code-pane pre { flex: 1; min-height: 0; margin: 0; padding: 18px 20px; overflow: auto; }
-    #sourceCode { color: #d6e0f0; font-family: var(--mono); font-size: 11px; line-height: 1.65; white-space: pre; tab-size: 2; }
+    .source-path-name {
+      min-width: 0; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .source-draft-state {
+      flex: none; padding: 2px 5px; border-radius: 4px; color: #94a3b8;
+      background: rgba(148,163,184,.1); font-size: 8px; font-family: var(--mono);
+    }
+    .source-draft-state.is-dirty { color: #fbbf24; background: rgba(251,191,36,.12); }
+    .source-save-btn {
+      flex: none; border: 1px solid #334155; border-radius: 5px; padding: 3px 6px;
+      background: #1e293b; color: #cbd5e1; font-size: 8px; font-weight: 650;
+    }
+    .source-save-btn:hover:not(:disabled) { border-color: #818cf8; color: #fff; }
+    .source-save-btn:disabled { opacity: .4; cursor: not-allowed; }
+    .source-editor {
+      flex: 1; min-height: 0; width: 100%; margin: 0; padding: 16px 20px; border: 0; outline: 0;
+      resize: none; background: #0f172a; color: #d6e0f0; font-family: var(--mono);
+      font-size: 11px; line-height: 1.65; white-space: pre; tab-size: 2; overflow: auto;
+      caret-color: #a5b4fc;
+    }
+    .source-editor::selection { background: rgba(99,102,241,.35); }
+    .source-edit-hint {
+      flex: none; padding: 5px 12px; border-top: 1px solid #1f2937; background: #0b1220;
+      color: #64748b; font-size: 8px; line-height: 1.45;
+    }
     .chat-card { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
     .chat-head {
       flex: none; padding: 13px 15px; display: flex; align-items: center; justify-content: space-between;
@@ -817,6 +911,10 @@
     .modal-close:hover { background: #f9fafb; color: var(--ink); }
     .score-modal-panel { width: min(820px, 100%); }
     .single-model-panel { width: min(780px, 100%); }
+    .source-draft-panel { width: min(520px, 100%); }
+    .source-draft-text { margin: 14px 0 0; color: var(--muted); font-size: 11px; line-height: 1.8; }
+    .source-draft-text strong { color: var(--ink); }
+    .source-draft-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
     .single-model-intro { margin: 12px 0 0; color: var(--muted); font-size: 10.5px; line-height: 1.7; }
     .single-model-intro strong { color: var(--ink); }
     .single-model-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 15px; }
@@ -1033,6 +1131,22 @@
       <form id="promptForm" class="prompt-form" novalidate>
         <div class="prompt-box">
           <textarea id="promptInput" maxlength="3000" placeholder="例如：做一个深色风格的番茄钟，支持开始 / 暂停 / 重置，并显示今日完成次数……" aria-label="应用生成需求"></textarea>
+          <div class="prompt-tools">
+            <input id="imageInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+            <button id="imageUploadBtn" class="attach-btn" type="button" title="上传参考图，按图片风格生成页面">
+              <span class="attach-icon">＋</span>
+              <span id="imageUploadText">上传参考图</span>
+            </button>
+            <span class="attach-hint">支持 JPG / PNG / WebP，自动压缩</span>
+          </div>
+          <div id="imagePreview" class="image-preview" hidden>
+            <img id="imagePreviewThumb" alt="参考图预览">
+            <div class="image-preview-copy">
+              <strong id="imagePreviewName">参考图</strong>
+              <span id="imagePreviewMeta"></span>
+            </div>
+            <button id="imageRemoveBtn" class="image-remove" type="button" aria-label="移除参考图">×</button>
+          </div>
         </div>
         <div class="form-foot">
           <span class="form-hint">Ctrl / ⌘ + Enter 快速生成 · 前端 / 全栈项目 · 实时阶段进度</span>
@@ -1064,7 +1178,7 @@
             <span class="panel-glyph">◷</span>
             <h2>我的项目</h2>
             <span id="projectCount" class="count-badge">0</span>
-            <span class="panel-sub">含版本迭代</span>
+            <span class="panel-sub">含版本迭代 · 右键可删项目</span>
           </div>
           <button id="refreshProjects" class="icon-refresh" type="button" title="刷新项目" aria-label="刷新项目">↻</button>
         </div>
@@ -1215,8 +1329,13 @@
             <div class="source-layout">
               <aside id="fileTree" class="file-tree" aria-label="项目文件目录"></aside>
               <div class="source-code-pane">
-                <div id="sourcePath" class="source-path"></div>
-                <pre><code id="sourceCode"></code></pre>
+                <div class="source-path">
+                  <span id="sourcePath" class="source-path-name"></span>
+                  <span id="sourceDraftState" class="source-draft-state"></span>
+                  <button id="sourceSaveBtn" class="source-save-btn" type="button" disabled>保存修改</button>
+                </div>
+                <textarea id="sourceEditor" class="source-editor" spellcheck="false" autocomplete="off" autocapitalize="off" aria-label="源码编辑器"></textarea>
+                <div class="source-edit-hint">编辑后自动刷新预览；前端项目从 index.html 重建，全栈项目建议编辑 preview.html 查看视觉变化。</div>
               </div>
             </div>
           </div>
@@ -1265,6 +1384,36 @@
     </div>
   </div>
 
+  <div id="projectContextMenu" class="project-context-menu" role="menu" hidden>
+    <div id="projectContextTitle" class="project-context-title"></div>
+    <button id="deleteProjectBtn" class="project-context-item" type="button" role="menuitem">
+      <span class="project-context-icon">×</span>
+      <span>删除整个项目<small id="deleteProjectHint">删除该项目全部版本</small></span>
+    </button>
+  </div>
+
+  <div id="sourceDraftModal" class="modal" hidden>
+    <div class="modal-backdrop" data-close-source-draft></div>
+    <div class="modal-panel source-draft-panel" role="dialog" aria-modal="true" aria-labelledby="sourceDraftTitle">
+      <div class="modal-top">
+        <div>
+          <div class="modal-kicker">Unsaved source edits</div>
+          <h3 id="sourceDraftTitle">当前版本有未保存的源码修改</h3>
+        </div>
+        <button id="sourceDraftClose" class="modal-close" type="button" aria-label="继续编辑">×</button>
+      </div>
+      <p class="source-draft-text">
+        是否保留这些修改？<br>
+        <strong>是</strong>：直接更新保存到当前版本，不新增版本；<br>
+        <strong>否</strong>：放弃本次修改，恢复修改前的源码和预览。
+      </p>
+      <div class="source-draft-actions">
+        <button id="sourceDraftDiscard" class="ghost-btn" type="button">否，放弃修改</button>
+        <button id="sourceDraftSave" class="btn-primary" type="button">是，保留修改</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toastStack" class="toast-stack" aria-live="polite"></div>
 
   <script>
@@ -1303,6 +1452,14 @@
         workspacePage: $("#workspacePage"),
         promptForm: $("#promptForm"),
         promptInput: $("#promptInput"),
+        imageInput: $("#imageInput"),
+        imageUploadBtn: $("#imageUploadBtn"),
+        imageUploadText: $("#imageUploadText"),
+        imagePreview: $("#imagePreview"),
+        imagePreviewThumb: $("#imagePreviewThumb"),
+        imagePreviewName: $("#imagePreviewName"),
+        imagePreviewMeta: $("#imagePreviewMeta"),
+        imageRemoveBtn: $("#imageRemoveBtn"),
         generateBtn: $("#generateBtn"),
         generateBtnText: $("#generateBtnText"),
         generateSpinner: $("#generateSpinner"),
@@ -1357,7 +1514,9 @@
         sourceView: $("#sourceView"),
         fileTree: $("#fileTree"),
         sourcePath: $("#sourcePath"),
-        sourceCode: $("#sourceCode"),
+        sourceEditor: $("#sourceEditor"),
+        sourceDraftState: $("#sourceDraftState"),
+        sourceSaveBtn: $("#sourceSaveBtn"),
 
         chatPanel: $("#chatPanel"),
         chatAvatar: $("#chatAvatar"),
@@ -1379,6 +1538,14 @@
         singleRaceList: $("#singleRaceList"),
         keepRaceBtn: $("#keepRaceBtn"),
         confirmSingleBtn: $("#confirmSingleBtn"),
+        projectContextMenu: $("#projectContextMenu"),
+        projectContextTitle: $("#projectContextTitle"),
+        deleteProjectBtn: $("#deleteProjectBtn"),
+        deleteProjectHint: $("#deleteProjectHint"),
+        sourceDraftModal: $("#sourceDraftModal"),
+        sourceDraftClose: $("#sourceDraftClose"),
+        sourceDraftDiscard: $("#sourceDraftDiscard"),
+        sourceDraftSave: $("#sourceDraftSave"),
         toastStack: $("#toastStack"),
       };
 
@@ -1389,14 +1556,20 @@
         jobStatusMap: {},
         removedJobIds: new Set(),
         jobsPollTimer: null,
+        contextProjectId: null,
         singleStats: null,
         singleModelChoice: null,
         singleModelResolve: null,
         singleModelLoading: false,
+        referenceImage: null,
         detail: null,
         versionId: null,
         view: "preview",
         sourcePath: null,
+        sourceDraft: null,
+        sourceDraftResolve: null,
+        sourcePreviewTimer: null,
+        sourceSaving: false,
         collapsedDirs: new Set(),
         raceReview: null,
         generating: false,
@@ -1510,16 +1683,144 @@
         }
       }
 
-      function openWorkspaceWithGeneration(prompt, mode, provider = "") {
+      function renderReferenceImage() {
+        const image = state.referenceImage;
+        if (!el.imagePreview || !el.imageUploadText) return;
+        if (!image) {
+          el.imagePreview.hidden = true;
+          el.imageUploadText.textContent = "上传参考图";
+          return;
+        }
+        el.imagePreview.hidden = false;
+        el.imageUploadText.textContent = "更换参考图";
+        el.imagePreviewThumb.src = image.dataUrl;
+        el.imagePreviewName.textContent = image.name || "参考图";
+        const meta = image.meta || {};
+        const size = Math.round((image.dataUrl.length * 0.75) / 1024);
+        el.imagePreviewMeta.textContent = `${meta.width || "?"}×${meta.height || "?"} · 约 ${size}KB · 主色 ${(meta.palette || []).slice(0, 3).join(" ") || "自动分析"}`;
+      }
+
+      function clearReferenceImage() {
+        state.referenceImage = null;
+        if (el.imageInput) el.imageInput.value = "";
+        renderReferenceImage();
+      }
+
+      function extractImageSignals(canvas) {
+        const sample = document.createElement("canvas");
+        sample.width = 48;
+        sample.height = 48;
+        const context = sample.getContext("2d", { willReadFrequently: true });
+        context.drawImage(canvas, 0, 0, 48, 48);
+        let data;
+        try {
+          data = context.getImageData(0, 0, 48, 48).data;
+        } catch (error) {
+          return { palette: [], brightness: null };
+        }
+        const counts = new Map();
+        let brightnessSum = 0;
+        let brightnessCount = 0;
+        for (let i = 0; i < data.length; i += 4) {
+          if (data[i + 3] < 128) continue;
+          const r = data[i], g = data[i + 1], b = data[i + 2];
+          brightnessSum += (r + g + b) / 3 / 255;
+          brightnessCount += 1;
+          const key = `${r >> 4}-${g >> 4}-${b >> 4}`;
+          const current = counts.get(key) || { r: 0, g: 0, b: 0, count: 0 };
+          current.r += r;
+          current.g += g;
+          current.b += b;
+          current.count += 1;
+          counts.set(key, current);
+        }
+        const palette = [...counts.values()]
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 5)
+          .map((item) => {
+            const r = Math.round(item.r / item.count);
+            const g = Math.round(item.g / item.count);
+            const b = Math.round(item.b / item.count);
+            return `#${[r, g, b].map((value) => value.toString(16).padStart(2, "0")).join("")}`;
+          });
+        return {
+          palette,
+          brightness: brightnessCount
+            ? Math.round((brightnessSum / brightnessCount) * 1000) / 1000
+            : null,
+        };
+      }
+
+      async function prepareReferenceImage(file) {
+        if (!file || !file.type || !file.type.startsWith("image/")) {
+          throw new Error("请选择 PNG、JPG、WebP 或 GIF 图片。");
+        }
+        if (file.size > 12 * 1024 * 1024) {
+          throw new Error("图片不能超过 12MB，请先压缩。");
+        }
+        const objectUrl = URL.createObjectURL(file);
+        try {
+          const image = await new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => resolve(img);
+            img.onerror = () => reject(new Error("图片解析失败，请更换图片。"));
+            img.src = objectUrl;
+          });
+          const maxSide = 1280;
+          const scale = Math.min(1, maxSide / Math.max(image.width, image.height));
+          const width = Math.max(1, Math.round(image.width * scale));
+          const height = Math.max(1, Math.round(image.height * scale));
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+          const context = canvas.getContext("2d");
+          context.fillStyle = "#ffffff";
+          context.fillRect(0, 0, width, height);
+          context.drawImage(image, 0, 0, width, height);
+          let dataUrl = canvas.toDataURL("image/jpeg", 0.82);
+          if (dataUrl.length > 3300000) {
+            canvas.width = Math.min(900, width);
+            canvas.height = Math.round((height / width) * canvas.width);
+            const smallContext = canvas.getContext("2d");
+            smallContext.fillStyle = "#ffffff";
+            smallContext.fillRect(0, 0, canvas.width, canvas.height);
+            smallContext.drawImage(image, 0, 0, canvas.width, canvas.height);
+            dataUrl = canvas.toDataURL("image/jpeg", 0.7);
+          }
+          if (dataUrl.length > 3400000) {
+            throw new Error("压缩后的图片仍然过大，请换一张尺寸更小的图片。");
+          }
+          const signals = extractImageSignals(canvas);
+          return {
+            dataUrl,
+            name: file.name || "reference.jpg",
+            meta: {
+              width: canvas.width,
+              height: canvas.height,
+              palette: signals.palette,
+              brightness: signals.brightness,
+            },
+          };
+        } finally {
+          URL.revokeObjectURL(objectUrl);
+        }
+      }
+
+      function openWorkspaceWithGeneration(prompt, mode, provider = "", image = null) {
         const payload = { prompt, mode };
         if (provider) payload.provider = provider;
+        if (image) payload.image = image;
         if (storePending(payload)) {
           window.location.href = "/workspace/";
-        } else {
-          const params = new URLSearchParams({ autorun: "1", mode, prompt });
-          if (provider) params.set("provider", provider);
-          window.location.href = `/workspace/?${params.toString()}`;
+          return;
         }
+        if (image) {
+          toast("参考图过大，无法在页面间传递，请换一张更小的图片。", "error", 6000);
+          return;
+        }
+        const params = new URLSearchParams({ autorun: "1", mode, prompt });
+        if (provider) params.set("provider", provider);
+        window.location.href = `/workspace/?${params.toString()}`;
       }
 
       /* ============================= HOME ============================= */
@@ -1639,10 +1940,11 @@
         }
         const choice = await openSingleModelDialog();
         if (!choice) return;
+        const image = state.referenceImage;
         if (choice === "race") {
-          openWorkspaceWithGeneration(trimmed, "race");
+          openWorkspaceWithGeneration(trimmed, "race", "", image);
         } else {
-          openWorkspaceWithGeneration(trimmed, "single", choice);
+          openWorkspaceWithGeneration(trimmed, "single", choice, image);
         }
       }
 
@@ -1718,7 +2020,11 @@
                     <span>${formatTime(project.created_at)}</span>
                     <span class="meta-dot"></span>
                     <span>${versions.length} 个版本</span>
-                    ${project.project_type === "backend" ? `<span class="meta-dot"></span><span class="project-type-tag">${escapeHtml(project.backend_label || "全栈项目")}</span>` : ""}
+                    ${project.project_type === "backend"
+                      ? `<span class="meta-dot"></span><span class="project-type-tag">${escapeHtml(project.backend_label || "全栈项目")}</span>`
+                      : project.project_type === "frontend"
+                        ? `<span class="meta-dot"></span><span class="project-type-tag">前端项目${project.backend_label ? ` · ${escapeHtml(project.backend_label)}` : ""}</span>`
+                        : ""}
                     ${project.published_count ? `<span class="meta-dot"></span><span class="project-published-tag">${project.published_count} 个已发布</span>` : ""}
                   </div>
                 </a>
@@ -1755,6 +2061,69 @@
             top: Math.max(0, target),
             behavior: "smooth",
           });
+        }
+      }
+
+      function hideProjectContextMenu() {
+        if (!el.projectContextMenu) return;
+        el.projectContextMenu.hidden = true;
+        state.contextProjectId = null;
+      }
+
+      function showProjectContextMenu(event, card) {
+        if (!el.projectContextMenu) return;
+        const projectId = Number(card.dataset.projectCard);
+        const project = state.projects.find((item) => item.id === projectId);
+        if (!project) return;
+        state.contextProjectId = projectId;
+        const versions = project.versions || [];
+        const published = Number(project.published_count) || 0;
+        if (el.projectContextTitle) {
+          el.projectContextTitle.textContent = shortText(project.prompt || "未命名项目", 46);
+        }
+        if (el.deleteProjectHint) {
+          el.deleteProjectHint.textContent =
+            `删除全部 ${versions.length} 个版本` +
+            (published ? `（含 ${published} 个已发布）` : "");
+        }
+        el.projectContextMenu.hidden = false;
+        const width = el.projectContextMenu.offsetWidth || 260;
+        const height = el.projectContextMenu.offsetHeight || 90;
+        const left = Math.min(event.clientX, window.innerWidth - width - 10);
+        const top = Math.min(event.clientY, window.innerHeight - height - 10);
+        el.projectContextMenu.style.left = `${Math.max(10, left)}px`;
+        el.projectContextMenu.style.top = `${Math.max(10, top)}px`;
+      }
+
+      async function deleteProjectFromContext() {
+        const projectId = state.contextProjectId;
+        hideProjectContextMenu();
+        const project = state.projects.find((item) => item.id === projectId);
+        if (!project) return;
+        const versions = project.versions || [];
+        const published = Number(project.published_count) || 0;
+        let message = `确定删除项目「${shortText(project.prompt || "未命名项目", 60)}」及其全部 ${versions.length} 个版本吗？此操作不可恢复。`;
+        if (published) {
+          message += `\n\n该项目有 ${published} 个已发布版本，删除后对应发布链接会立即失效。`;
+        }
+        if (!window.confirm(message)) return;
+        if (el.deleteProjectBtn) el.deleteProjectBtn.disabled = true;
+        try {
+          await api(`/api/history/${projectId}/delete/`, { method: "POST" });
+          state.projects = state.projects.filter((item) => item.id !== projectId);
+          state.expandedProjects.delete(projectId);
+          renderProjects();
+          toast(
+            published
+              ? "项目及全部版本已删除，相关发布链接已失效。"
+              : "项目及全部版本已删除。",
+            "success",
+            4200
+          );
+        } catch (error) {
+          toast(error.message || "删除项目失败，请稍后重试。", "error", 5000);
+        } finally {
+          if (el.deleteProjectBtn) el.deleteProjectBtn.disabled = false;
         }
       }
 
@@ -1855,7 +2224,10 @@
             ? "在线修改"
             : job.project_type === "backend"
               ? "全栈项目"
-              : "";
+              : job.project_type === "frontend"
+                ? "前端项目"
+                : "";
+          const referenceLabel = job.has_reference_image ? " · 含参考图" : "";
           return `
             <article class="job-item ${cls}">
               <div class="job-item-top">
@@ -1870,7 +2242,7 @@
                 </div>` : ""}
               ${job.status === "failed" && job.error ? `<div class="job-error">${escapeHtml(shortText(job.error, 100))}</div>` : ""}
               <div class="job-links">
-                <span class="job-meta">${formatTime(job.updated_at)}${metaLabel ? ` · ${metaLabel}` : ""}</span>
+                <span class="job-meta">${formatTime(job.updated_at)}${metaLabel ? ` · ${metaLabel}` : ""}${referenceLabel}</span>
                 <span class="job-actions">
                   ${targetUrl ? `<a class="job-link" href="${targetUrl}">${active ? "查看进度 →" : "打开项目 →"}</a>` : ""}
                   <button class="job-delete" type="button" data-job-delete="${job.id}" data-job-active="${active ? "1" : "0"}" title="${active ? "停止并删除任务" : "删除失败任务"}" aria-label="${active ? "停止并删除任务" : "删除失败任务"}">删除</button>
@@ -2063,6 +2435,28 @@
 
       function initHome() {
         renderTemplates();
+        renderReferenceImage();
+        el.imageUploadBtn?.addEventListener("click", () => el.imageInput?.click());
+        el.imageInput?.addEventListener("change", async () => {
+          const file = el.imageInput.files && el.imageInput.files[0];
+          if (!file) return;
+          el.imageUploadBtn.disabled = true;
+          if (el.imageUploadText) el.imageUploadText.textContent = "处理中…";
+          try {
+            state.referenceImage = await prepareReferenceImage(file);
+            renderReferenceImage();
+            toast("参考图已添加，生成时会参考其布局与配色。", "success", 3200);
+          } catch (error) {
+            toast(error.message || "参考图处理失败，请更换图片。", "error", 5000);
+            renderReferenceImage();
+          } finally {
+            el.imageInput.value = "";
+            el.imageUploadBtn.disabled = false;
+          }
+        });
+        el.imageRemoveBtn?.addEventListener("click", () => {
+          clearReferenceImage();
+        });
         el.singleModelClose?.addEventListener("click", () => closeSingleModelDialog(null));
         el.singleModelModal?.querySelector("[data-close-single-model]")?.addEventListener("click", () => closeSingleModelDialog(null));
         el.keepRaceBtn?.addEventListener("click", () => closeSingleModelDialog(null));
@@ -2077,8 +2471,11 @@
           closeSingleModelDialog(state.singleModelChoice);
         });
         document.addEventListener("keydown", (event) => {
-          if (event.key === "Escape" && el.singleModelModal && !el.singleModelModal.hidden) {
+          if (event.key !== "Escape") return;
+          if (el.singleModelModal && !el.singleModelModal.hidden) {
             closeSingleModelDialog(null);
+          } else if (el.projectContextMenu && !el.projectContextMenu.hidden) {
+            hideProjectContextMenu();
           }
         });
         el.templatesGrid?.addEventListener("click", (event) => {
@@ -2145,6 +2542,18 @@
             loadJobs();
           }
         });
+        el.projectsList?.addEventListener("contextmenu", (event) => {
+          const card = event.target.closest("[data-project-card]");
+          if (!card) return;
+          event.preventDefault();
+          showProjectContextMenu(event, card);
+        });
+        el.deleteProjectBtn?.addEventListener("click", deleteProjectFromContext);
+        window.addEventListener("click", (event) => {
+          if (!event.target.closest("#projectContextMenu")) hideProjectContextMenu();
+        });
+        window.addEventListener("scroll", hideProjectContextMenu, true);
+        window.addEventListener("resize", hideProjectContextMenu);
         el.projectsList?.addEventListener("click", (event) => {
           const expandButton = event.target.closest("[data-expand-project]");
           if (expandButton) {
@@ -2436,19 +2845,54 @@
         const publishedCount = state.detail.versions.filter((version) => version.published).length;
         const typeText = state.detail.project_type === "backend"
           ? ` · ${state.detail.backend_label || "全栈项目"}`
-          : " · 单文件前端";
+          : state.detail.project_type === "frontend"
+            ? ` · 前端项目${state.detail.backend_label ? ` · ${state.detail.backend_label}` : ""}`
+            : " · 单文件前端";
         el.sideProjectMeta.textContent = `创建于 ${formatTime(state.detail.created_at)} · ${state.detail.version_count} 个版本 · ${publishedCount} 个已发布${typeText}`;
         el.sideVersionCount.textContent = `${state.detail.version_count} 个版本`;
-        el.sideVersionList.innerHTML = [...state.detail.versions].reverse().map((version) => `
-          <button class="side-version${version.id === state.versionId ? " is-active" : ""}" type="button" data-side-version="${version.id}">
-            <span class="version-no">v${version.version_no}</span>
-            <span class="side-version-copy">
-              <strong>${escapeHtml(shortText(version.note || "版本", 38))}</strong>
-              <span>${formatTime(version.created_at)}${version.is_mock ? " · Mock" : ""}</span>
-            </span>
-            ${version.published ? '<span class="published-mini">已发布</span>' : ""}
-          </button>
-        `).join("");
+        const versions = state.detail.versions || [];
+        const byId = new Map(versions.map((version) => [Number(version.id), version]));
+        const children = new Map();
+        const roots = [];
+        versions.forEach((version) => {
+          const parentId = Number(version.base_version_id) || null;
+          const parent = parentId ? byId.get(parentId) : null;
+          if (parent && parent.id !== version.id) {
+            if (!children.has(parent.id)) children.set(parent.id, []);
+            children.get(parent.id).push(version);
+          } else {
+            roots.push(version);
+          }
+        });
+        [...children.values()].forEach((list) => list.sort((a, b) => a.version_no - b.version_no));
+        roots.sort((a, b) => a.version_no - b.version_no);
+        const rendered = new Set();
+        const renderNode = (version, depth = 0) => {
+          if (rendered.has(version.id)) return "";
+          rendered.add(version.id);
+          const baseNo = version.base_version_no
+            || (version.base_version_id
+              ? byId.get(Number(version.base_version_id))?.version_no
+              : null);
+          const kids = children.get(version.id) || [];
+          return `
+            <div class="side-version-node ${depth ? "is-child" : "is-root"}">
+              <button class="side-version${version.id === state.versionId ? " is-active" : ""}" type="button" data-side-version="${version.id}">
+                <span class="version-no">v${version.version_no}</span>
+                <span class="side-version-copy">
+                  <strong>${escapeHtml(shortText(version.note || "版本", 38))}</strong>
+                  <span>${formatTime(version.created_at)}${version.is_mock ? " · Mock" : ""}${baseNo ? ` · 基于 v${baseNo}` : ""}</span>
+                </span>
+                ${version.published ? '<span class="published-mini">已发布</span>' : ""}
+              </button>
+              ${kids.map((child) => renderNode(child, depth + 1)).join("")}
+            </div>`;
+        };
+        let treeHtml = roots.map((version) => renderNode(version)).join("");
+        versions.forEach((version) => {
+          if (!rendered.has(version.id)) treeHtml += renderNode(version);
+        });
+        el.sideVersionList.innerHTML = treeHtml;
       }
 
       function renderRaceReview() {
@@ -2590,10 +3034,10 @@
         return shim + html;
       }
 
-      function setPreviewDocument(version) {
+      function setPreviewDocument(version, htmlOverride = null) {
         const token = String(++state.previewToken);
         el.previewLoading.hidden = false;
-        let html = version.html_code || "";
+        let html = htmlOverride != null ? htmlOverride : (version.html_code || "");
         html = injectPreviewStorageShim(html);
         const readyScript = String.raw`
 <script>
@@ -2951,19 +3395,314 @@ __PF_SCRIPT_CLOSE__`.replace("__PF_SCRIPT_CLOSE__", "</" + "script>");
         return dirHtml + fileHtml;
       }
 
+      function getEditableVersionFiles(version) {
+        if (state.sourceDraft && state.sourceDraft.versionId === version.id) {
+          return state.sourceDraft.files;
+        }
+        return getVersionFiles(version);
+      }
+
+      function ensureSourceDraft(version) {
+        if (state.sourceDraft && state.sourceDraft.versionId === version.id) {
+          return state.sourceDraft;
+        }
+        const files = getVersionFiles(version).map((file) => ({
+          path: file.path,
+          content: file.content,
+        }));
+        const original = {};
+        files.forEach((file) => { original[file.path] = file.content; });
+        state.sourceDraft = {
+          versionId: version.id,
+          files,
+          original,
+          previewHtml: version.html_code || "",
+          dirty: false,
+          previewEdited: false,
+        };
+        return state.sourceDraft;
+      }
+
+      function updateSourceDraftUI() {
+        const version = currentVersion();
+        const draft = version && state.sourceDraft?.versionId === version.id
+          ? state.sourceDraft
+          : null;
+        const dirty = Boolean(draft?.dirty);
+        if (el.sourceDraftState) {
+          el.sourceDraftState.textContent = state.sourceSaving
+            ? "保存中…"
+            : dirty
+              ? "未保存修改"
+              : "已保存";
+          el.sourceDraftState.classList.toggle("is-dirty", dirty || state.sourceSaving);
+        }
+        if (el.sourceSaveBtn) {
+          el.sourceSaveBtn.disabled = !dirty || state.sourceSaving;
+        }
+      }
+
+      function resolveProjectAsset(baseDir, ref) {
+        let value = String(ref || "").trim().split(/[?#]/, 1)[0];
+        if (!value || /^[a-z][a-z0-9+.-]*:/i.test(value) || value.startsWith("//")) {
+          return null;
+        }
+        const raw = value.startsWith("/")
+          ? value.slice(1)
+          : (baseDir ? `${baseDir}/${value}` : value);
+        const parts = [];
+        raw.split("/").forEach((part) => {
+          if (!part || part === ".") return;
+          if (part === "..") parts.pop();
+          else parts.push(part);
+        });
+        return parts.join("/");
+      }
+
+      function buildPreviewFromFrontendEntry(entry, files) {
+        if (!entry || /\{%|\{\{/.test(entry.content)) return null;
+        const fileMap = new Map(files.map((file) => [file.path, file.content]));
+        const baseDir = entry.path.includes("/")
+          ? entry.path.slice(0, entry.path.lastIndexOf("/"))
+          : "";
+        let unresolvedLocal = false;
+        let html = entry.content;
+        html = html.replace(/<link\b[^>]*>/gi, (tag) => {
+          if (!/rel\s*=\s*["']stylesheet/i.test(tag)) return tag;
+          const hrefMatch = tag.match(/\bhref\s*=\s*["']([^"']+)["']/i);
+          if (!hrefMatch) return tag;
+          const localPath = resolveProjectAsset(baseDir, hrefMatch[1]);
+          if (!localPath) return tag;
+          if (!fileMap.has(localPath)) {
+            unresolvedLocal = true;
+            return tag;
+          }
+          return `<style data-source-asset="${escapeHtml(localPath)}">${fileMap.get(localPath).replace(/<\/style/gi, "<\\/style")}</style>`;
+        });
+        html = html.replace(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi, (tag, attrs) => {
+          const srcMatch = attrs.match(/\bsrc\s*=\s*["']([^"']+)["']/i);
+          if (!srcMatch) return tag;
+          const localPath = resolveProjectAsset(baseDir, srcMatch[1]);
+          if (!localPath) return tag;
+          if (!fileMap.has(localPath)) {
+            unresolvedLocal = true;
+            return tag;
+          }
+          const content = fileMap.get(localPath);
+          if (/\b(?:import|export)\s/.test(content)) {
+            unresolvedLocal = true;
+            return tag;
+          }
+          const cleanAttrs = attrs.replace(
+            /\s+src\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/i,
+            "",
+          );
+          return "<script" + cleanAttrs + ">"
+            + content.replace(/<\/script/gi, "<\\/script")
+            + "</scr" + "ipt>";
+        });
+        if (unresolvedLocal) return null;
+        return html;
+      }
+
+      function injectChangedSourceAssets(html, draft) {
+        const changed = draft.files.filter(
+          (file) => file.path !== "preview.html"
+            && file.content !== draft.original[file.path]
+        );
+        const cssBlocks = changed
+          .filter((file) => /\.css$/i.test(file.path))
+          .map((file) => `<style data-source-file="${escapeHtml(file.path)}">${file.content.replace(/<\/style/gi, "<\\/style")}</style>`)
+          .join("");
+        const jsBlocks = changed
+          .filter((file) => /\.(?:js|mjs)$/i.test(file.path))
+          .map((file) => "<script data-source-file=\"" + escapeHtml(file.path) + "\">"
+            + file.content.replace(/<\/script/gi, "<\\/script")
+            + "</scr" + "ipt>")
+          .join("");
+        let result = html;
+        if (cssBlocks) {
+          result = /<\/head>/i.test(result)
+            ? result.replace(/<\/head>/i, `${cssBlocks}</head>`)
+            : cssBlocks + result;
+        }
+        if (jsBlocks) {
+          result = /<\/body>/i.test(result)
+            ? result.replace(/<\/body>/i, `${jsBlocks}</body>`)
+            : result + jsBlocks;
+        }
+        return result;
+      }
+
+      function rebuildDraftPreview(version, draft) {
+        const files = draft.files;
+        const previewFile = files.find((file) => file.path === "preview.html");
+        if (draft.previewEdited && previewFile) {
+          return previewFile.content;
+        }
+        if (state.detail?.project_type === "frontend") {
+          const htmlFiles = files.filter(
+            (file) => file.path !== "preview.html" && /\.(?:html?|htm)$/i.test(file.path)
+          );
+          const entry = htmlFiles.find((file) => /(^|\/)index\.html?$/i.test(file.path))
+            || htmlFiles[0];
+          if (entry) {
+            const built = buildPreviewFromFrontendEntry(entry, files);
+            if (built) return built;
+          }
+        }
+        const changedHtml = files.find(
+          (file) => file.path !== "preview.html"
+            && /\.(?:html?|htm)$/i.test(file.path)
+            && file.content !== draft.original[file.path]
+            && /<html[\s>]/i.test(file.content)
+        );
+        if (changedHtml) {
+          const built = buildPreviewFromFrontendEntry(changedHtml, files);
+          if (built) return built;
+        }
+        const changedCssOrJs = files.some(
+          (file) => file.path !== "preview.html"
+            && file.content !== draft.original[file.path]
+            && /\.(?:css|js|mjs)$/i.test(file.path)
+        );
+        const basePreview = previewFile?.content || version.html_code || "";
+        if (changedCssOrJs) {
+          return injectChangedSourceAssets(basePreview, draft);
+        }
+        return basePreview;
+      }
+
+      function scheduleDraftPreview(version) {
+        window.clearTimeout(state.sourcePreviewTimer);
+        state.sourcePreviewTimer = window.setTimeout(() => {
+          const draft = state.sourceDraft;
+          if (!draft || draft.versionId !== version.id || !draft.dirty) return;
+          draft.previewHtml = rebuildDraftPreview(version, draft);
+          setPreviewDocument(version, draft.previewHtml);
+        }, 320);
+      }
+
+      function handleSourceInput() {
+        const version = currentVersion();
+        if (!version) return;
+        const draft = ensureSourceDraft(version);
+        const activeFile = draft.files.find((file) => file.path === state.sourcePath);
+        if (!activeFile) return;
+        activeFile.content = el.sourceEditor.value;
+        draft.previewEdited = state.sourcePath === "preview.html"
+          && activeFile.content !== draft.original["preview.html"];
+        draft.dirty = draft.files.some(
+          (file) => file.content !== draft.original[file.path]
+        );
+        updateSourceDraftUI();
+        if (!draft.dirty) {
+          window.clearTimeout(state.sourcePreviewTimer);
+          setPreviewDocument(version);
+          return;
+        }
+        scheduleDraftPreview(version);
+      }
+
+      async function saveSourceDraft() {
+        const version = currentVersion();
+        const draft = state.sourceDraft;
+        if (!version || !draft || draft.versionId !== version.id || !draft.dirty) {
+          return true;
+        }
+        if (state.sourceSaving) return false;
+        state.sourceSaving = true;
+        updateSourceDraftUI();
+        window.clearTimeout(state.sourcePreviewTimer);
+        draft.previewHtml = rebuildDraftPreview(version, draft);
+        const files = draft.files
+          .filter((file) => file.path !== "preview.html")
+          .map((file) => ({ path: file.path, content: file.content }));
+        try {
+          const data = await api(
+            `/api/history/${state.detail.id}/versions/${version.id}/source/`,
+            {
+              method: "POST",
+              body: { files, html_code: draft.previewHtml },
+            }
+          );
+          const updated = data.version;
+          const target = state.detail.versions.find((item) => item.id === version.id);
+          if (target) {
+            target.files = updated.files || [];
+            target.html_code = updated.html_code || "";
+            target.is_mock = Boolean(updated.is_mock);
+          }
+          const latest = state.detail.versions[state.detail.versions.length - 1];
+          if (latest && latest.id === version.id) {
+            state.detail.html_code = updated.html_code || "";
+          }
+          state.sourceDraft = null;
+          state.sourceSaving = false;
+          renderSourceFile();
+          if (target) setPreviewDocument(target, updated.html_code || "");
+          toast("源码修改已保存到当前版本。", "success", 3600);
+          return true;
+        } catch (error) {
+          state.sourceSaving = false;
+          updateSourceDraftUI();
+          toast(error.message || "保存源码失败，请稍后重试。", "error", 5000);
+          return false;
+        }
+      }
+
+      function closeSourceDraftModal(decision = null) {
+        if (!el.sourceDraftModal || el.sourceDraftModal.hidden) return;
+        el.sourceDraftModal.hidden = true;
+        document.body.style.overflow = "";
+        const resolve = state.sourceDraftResolve;
+        state.sourceDraftResolve = null;
+        if (resolve) resolve(decision || null);
+      }
+
+      function askSourceDraftDecision() {
+        if (!el.sourceDraftModal) return Promise.resolve(null);
+        if (state.sourceDraftResolve) return Promise.resolve(null);
+        el.sourceDraftModal.hidden = false;
+        document.body.style.overflow = "hidden";
+        return new Promise((resolve) => {
+          state.sourceDraftResolve = resolve;
+        });
+      }
+
+      async function resolveSourceDraftBeforeLeave() {
+        if (!state.sourceDraft?.dirty) return true;
+        const decision = await askSourceDraftDecision();
+        if (decision === "save") {
+          return saveSourceDraft();
+        }
+        if (decision === "discard") {
+          const version = currentVersion();
+          state.sourceDraft = null;
+          window.clearTimeout(state.sourcePreviewTimer);
+          if (version) setPreviewDocument(version);
+          return true;
+        }
+        return false;
+      }
+
       function renderSourceFile() {
         const version = currentVersion();
         if (!version) return;
-        const files = getVersionFiles(version);
+        const files = getEditableVersionFiles(version);
         if (!files.some((item) => item.path === state.sourcePath)) {
-          state.sourcePath = files[0]?.path || null;
+          const preferred = state.detail?.project_type === "frontend"
+            ? files.find((item) => /(^|\/)index\.html?$/i.test(item.path))
+            : files.find((item) => item.path === "preview.html");
+          state.sourcePath = preferred?.path || files[0]?.path || null;
         }
         const tree = buildSourceTree(files);
         el.fileTree.innerHTML = renderSourceTree(tree, 0);
         el.sourcePath.textContent = state.sourcePath || "请选择文件";
         el.sourcePath.title = state.sourcePath || "";
         const activeFile = files.find((file) => file.path === state.sourcePath);
-        el.sourceCode.textContent = activeFile?.content || "";
+        el.sourceEditor.value = activeFile?.content || "";
+        updateSourceDraftUI();
       }
 
       function renderEditor() {
@@ -2988,6 +3727,11 @@ __PF_SCRIPT_CLOSE__`.replace("__PF_SCRIPT_CLOSE__", "</" + "script>");
         if (state.detail.project_type === "backend") {
           el.projectTypeBadge.hidden = false;
           el.projectTypeBadge.textContent = state.detail.backend_label || "全栈项目";
+        } else if (state.detail.project_type === "frontend") {
+          el.projectTypeBadge.hidden = false;
+          el.projectTypeBadge.textContent = state.detail.backend_label
+            ? `前端 · ${state.detail.backend_label}`
+            : "前端项目";
         } else {
           el.projectTypeBadge.hidden = true;
         }
@@ -3006,13 +3750,17 @@ __PF_SCRIPT_CLOSE__`.replace("__PF_SCRIPT_CLOSE__", "</" + "script>");
           <option value="${item.id}"${item.id === version.id ? " selected" : ""}>v${item.version_no} · ${escapeHtml(shortText(item.note || "版本", 26))}</option>
         `).join("");
 
+        const showPreview = state.view === "preview";
+        // Keep the iframe mounted and laid out while the source tab is open.
+        // Toggling display:none leaves Chromium's srcdoc viewport at 0×0, so
+        // returning to preview would paint blank until a full page refresh.
+        el.previewView.hidden = false;
+        el.previewView.classList.toggle("is-concealed", !showPreview);
+        el.sourceView.hidden = showPreview;
         renderSourceFile();
         if (el.previewFrame.dataset.versionId !== String(version.id)) {
           setPreviewDocument(version);
         }
-        const showPreview = state.view === "preview";
-        el.previewView.hidden = !showPreview;
-        el.sourceView.hidden = showPreview;
         el.tabs.forEach((tab) => {
           const active = tab.dataset.view === state.view;
           tab.classList.toggle("active", active);
@@ -3027,10 +3775,20 @@ __PF_SCRIPT_CLOSE__`.replace("__PF_SCRIPT_CLOSE__", "</" + "script>");
         updateChatContext();
       }
 
-      function selectVersion(versionId, options = {}) {
+      async function selectVersion(versionId, options = {}) {
         if (!state.detail) return;
         const version = state.detail.versions.find((item) => item.id === Number(versionId));
         if (!version) return;
+        if (version.id === state.versionId) {
+          if (el.versionSelect) el.versionSelect.value = String(state.versionId);
+          return;
+        }
+        const canLeave = await resolveSourceDraftBeforeLeave();
+        if (!canLeave) {
+          if (el.versionSelect) el.versionSelect.value = String(state.versionId);
+          return;
+        }
+        state.sourceDraft = null;
         state.versionId = version.id;
         if (options.clearReview !== false) state.raceReview = null;
         updateWorkspaceUrl();
@@ -3047,9 +3805,16 @@ __PF_SCRIPT_CLOSE__`.replace("__PF_SCRIPT_CLOSE__", "</" + "script>");
         }
       }
 
-      function setView(view) {
-        if (!currentVersion()) return;
-        state.view = view === "source" ? "source" : "preview";
+      async function setView(view) {
+        const version = currentVersion();
+        if (!version) return;
+        const nextView = view === "source" ? "source" : "preview";
+        if (nextView === "preview" && state.sourceDraft?.dirty
+            && state.sourceDraft.versionId === version.id) {
+          const canPreview = await resolveSourceDraftBeforeLeave();
+          if (!canPreview) return;
+        }
+        state.view = nextView;
         renderEditor();
       }
 
@@ -3061,6 +3826,9 @@ __PF_SCRIPT_CLOSE__`.replace("__PF_SCRIPT_CLOSE__", "</" + "script>");
           const data = await api(`/api/history/${historyId}/`);
           state.detail = data.history;
           state.raceReview = null;
+          state.sourceDraft = null;
+          state.sourcePath = null;
+          window.clearTimeout(state.sourcePreviewTimer);
           const preferred = state.detail.versions.find((version) => version.id === Number(preferredVersionId));
           const latest = state.detail.versions[state.detail.versions.length - 1];
           state.versionId = (preferred || latest)?.id || null;
@@ -3165,6 +3933,7 @@ __PF_SCRIPT_CLOSE__`.replace("__PF_SCRIPT_CLOSE__", "</" + "script>");
         if (job.status === "completed") return "项目生成完成";
         if (job.status === "failed") return "生成失败";
         if (job.mode === "backend" || job.project_type === "backend") return "全栈项目生成";
+        if (job.project_type === "frontend") return "前端项目生成";
         if (job.mode === "race") return "双模型并行生成";
         return "正在生成应用";
       }
@@ -3267,6 +4036,9 @@ __PF_SCRIPT_CLOSE__`.replace("__PF_SCRIPT_CLOSE__", "</" + "script>");
         state.detail = null;
         state.versionId = null;
         state.raceReview = null;
+        state.sourceDraft = null;
+        state.sourcePath = null;
+        window.clearTimeout(state.sourcePreviewTimer);
         state.view = "preview";
         state.stream = null;
         state.chat.open = false;
@@ -3292,6 +4064,8 @@ __PF_SCRIPT_CLOSE__`.replace("__PF_SCRIPT_CLOSE__", "</" + "script>");
               prompt: pending.prompt,
               mode: pending.mode || "single",
               provider: pending.mode === "single" ? (pending.provider || "") : "",
+              image_data: pending.image?.dataUrl || "",
+              image_meta: pending.image?.meta || null,
               client_id: getClientId(),
             },
           });
@@ -3604,12 +4378,16 @@ __PF_SCRIPT_CLOSE__`.replace("__PF_SCRIPT_CLOSE__", "</" + "script>");
         });
       }
 
-      function openChat() {
+      async function openChat() {
         const version = currentVersion();
         if (!state.detail || !version) return;
         if (state.chat.open) {
           el.chatInput.focus();
           return;
+        }
+        if (state.sourceDraft?.dirty) {
+          const canLeave = await resolveSourceDraftBeforeLeave();
+          if (!canLeave) return;
         }
         state.chat.returnView = !el.projectPanel.hidden ? "project" : "generation";
         state.chat.open = true;
@@ -3681,6 +4459,10 @@ __PF_SCRIPT_CLOSE__`.replace("__PF_SCRIPT_CLOSE__", "</" + "script>");
           el.chatInput.focus();
           return;
         }
+        if (state.sourceDraft?.dirty) {
+          const canLeave = await resolveSourceDraftBeforeLeave();
+          if (!canLeave) return;
+        }
 
         const selectedTargets = state.chat.selectedTargets;
         const restrictToSelection = state.chat.scope === true && selectedTargets.length > 0;
@@ -3734,6 +4516,8 @@ __PF_SCRIPT_CLOSE__`.replace("__PF_SCRIPT_CLOSE__", "</" + "script>");
         if (!history) return;
         state.detail = history;
         state.raceReview = null;
+        state.sourceDraft = null;
+        window.clearTimeout(state.sourcePreviewTimer);
         const latest = state.detail.versions[state.detail.versions.length - 1];
         state.versionId = latest?.id || state.versionId;
         state.view = "preview";
@@ -3914,6 +4698,40 @@ __PF_SCRIPT_CLOSE__`.replace("__PF_SCRIPT_CLOSE__", "</" + "script>");
             el.chatForm.requestSubmit();
           }
         });
+        el.sourceEditor?.addEventListener("input", handleSourceInput);
+        el.sourceEditor?.addEventListener("keydown", (event) => {
+          if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+            event.preventDefault();
+            saveSourceDraft();
+          }
+          if (event.key === "Tab") {
+            event.preventDefault();
+            const start = el.sourceEditor.selectionStart;
+            const end = el.sourceEditor.selectionEnd;
+            el.sourceEditor.setRangeText("  ", start, end, "end");
+            handleSourceInput();
+          }
+        });
+        el.sourceSaveBtn?.addEventListener("click", () => saveSourceDraft());
+        el.sourceDraftSave?.addEventListener("click", () => closeSourceDraftModal("save"));
+        el.sourceDraftDiscard?.addEventListener("click", () => closeSourceDraftModal("discard"));
+        el.sourceDraftClose?.addEventListener("click", () => closeSourceDraftModal(null));
+        el.sourceDraftModal?.querySelector("[data-close-source-draft]")?.addEventListener(
+          "click",
+          () => closeSourceDraftModal(null)
+        );
+        document.addEventListener("click", async (event) => {
+          const homeLink = event.target.closest('a[href="/"]');
+          if (!homeLink || !state.sourceDraft?.dirty) return;
+          event.preventDefault();
+          const canLeave = await resolveSourceDraftBeforeLeave();
+          if (canLeave) window.location.href = homeLink.href;
+        }, true);
+        window.addEventListener("beforeunload", (event) => {
+          if (!state.sourceDraft?.dirty) return;
+          event.preventDefault();
+          event.returnValue = "";
+        });
         el.fileTree?.addEventListener("click", (event) => {
           const folder = event.target.closest("[data-tree-dir]");
           if (folder) {
@@ -3959,7 +4777,9 @@ __PF_SCRIPT_CLOSE__`.replace("__PF_SCRIPT_CLOSE__", "</" + "script>");
         el.scoreModal?.querySelector("[data-close-score]")?.addEventListener("click", closeScoreModal);
         document.addEventListener("keydown", (event) => {
           if (event.key !== "Escape") return;
-          if (!el.scoreModal.hidden) closeScoreModal();
+          if (el.sourceDraftModal && !el.sourceDraftModal.hidden) {
+            closeSourceDraftModal(null);
+          } else if (!el.scoreModal.hidden) closeScoreModal();
           else if (state.chat.open && !state.chat.busy) closeChat();
         });
 

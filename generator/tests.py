@@ -1,10 +1,24 @@
+import base64
 import json
 
 from django.test import TestCase
 
-from .models import GenerationJob
+from .models import (
+    GenerateHistory,
+    GenerateVersion,
+    GenerationJob,
+    PublishedPage,
+)
 from .scoring import score_html
-from .views import _parse_project_bundle, _project_is_complete
+from .views import (
+    _frontend_project_is_complete,
+    _mock_frontend_project,
+    _normalize_image_meta,
+    _normalize_reference_image,
+    _parse_project_bundle,
+    _project_is_complete,
+    _wants_frontend_only,
+)
 
 
 class ScoringTests(TestCase):
@@ -181,3 +195,177 @@ class RaceStatsTests(TestCase):
         )
         self.assertIsNone(data["recommended"])
         self.assertEqual(len(data["races"]), 2)
+
+
+class FrontendProjectTests(TestCase):
+    def test_explicit_frontend_only_phrases(self):
+        self.assertTrue(_wants_frontend_only("只生成前端代码，不要后端"))
+        self.assertTrue(_wants_frontend_only("纯前端页面，用 React"))
+        self.assertFalse(_wants_frontend_only("生成一个完整的 Django 网站"))
+
+    def test_mock_frontend_project_is_complete(self):
+        project = _mock_frontend_project()
+        self.assertTrue(_frontend_project_is_complete(project))
+        paths = [item["path"] for item in project["files"]]
+        self.assertIn("index.html", paths)
+        self.assertIn("styles/app.css", paths)
+        self.assertIn("DEPLOY.md", paths)
+        self.assertFalse(any(path.endswith("manage.py") for path in paths))
+
+    def test_frontend_validation_rejects_backend_bundle(self):
+        project = {
+            "files": [
+                {"path": "manage.py", "content": "x"},
+                {"path": "requirements.txt", "content": "Django"},
+                {"path": "templates/index.html", "content": "x"},
+                {"path": "static/app.js", "content": "x"},
+                {"path": "README.md", "content": "x"},
+                {"path": "DEPLOY.md", "content": "x"},
+            ],
+            "preview_html": "<html></html>",
+        }
+        self.assertFalse(_frontend_project_is_complete(project))
+
+
+class ReferenceImageTests(TestCase):
+    PNG = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII="
+    )
+
+    def test_valid_image_data_url_is_normalized(self):
+        raw = "data:image/png;base64," + base64.b64encode(self.PNG).decode()
+        normalized = _normalize_reference_image(raw)
+        self.assertTrue(normalized.startswith("data:image/png;base64,"))
+
+    def test_invalid_image_is_rejected(self):
+        with self.assertRaises(ValueError):
+            _normalize_reference_image("not-an-image")
+
+    def test_image_meta_is_sanitized(self):
+        meta = _normalize_image_meta(
+            {
+                "width": 800,
+                "height": 600,
+                "brightness": 0.42,
+                "palette": ["#112233", "invalid"],
+                "name": "reference.png",
+                "ignored": "x",
+            }
+        )
+        self.assertEqual(meta["width"], 800)
+        self.assertEqual(meta["height"], 600)
+        self.assertEqual(meta["palette"], ["#112233"])
+        self.assertEqual(meta["name"], "reference.png")
+
+
+class DeleteHistoryTests(TestCase):
+    def test_delete_project_cascades_versions_and_publication(self):
+        history = GenerateHistory.objects.create(
+            prompt="delete project",
+            html_code="<html></html>",
+            project_type="backend",
+        )
+        version = GenerateVersion.objects.create(
+            history=history,
+            version_no=1,
+            html_code="<html></html>",
+            files=[],
+        )
+        publication = PublishedPage.objects.create(
+            version=version, slug="delete-history-test"
+        )
+        response = self.client.post(
+            f"/api/history/{history.id}/delete/", HTTP_HOST="localhost"
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["versions_deleted"], 1)
+        self.assertEqual(data["published_deleted"], 1)
+        self.assertFalse(GenerateHistory.objects.filter(pk=history.pk).exists())
+        self.assertFalse(GenerateVersion.objects.filter(pk=version.pk).exists())
+        self.assertFalse(PublishedPage.objects.filter(pk=publication.pk).exists())
+
+
+class SourceEditTests(TestCase):
+    def _project(self):
+        history = GenerateHistory.objects.create(
+            prompt="source edit test",
+            html_code="<html><body><h1>old</h1></body></html>",
+            project_type="frontend",
+            backend_label="React",
+        )
+        version = GenerateVersion.objects.create(
+            history=history,
+            version_no=1,
+            html_code="<html><body><h1>old</h1></body></html>",
+            files=[
+                {"path": "index.html", "content": "<html><body>old</body></html>"},
+                {"path": "styles/app.css", "content": "body{color:red}"},
+            ],
+        )
+        return history, version
+
+    def test_save_source_updates_current_version_in_place(self):
+        history, version = self._project()
+        response = self.client.post(
+            f"/api/history/{history.id}/versions/{version.id}/source/",
+            data=json.dumps(
+                {
+                    "files": [
+                        {"path": "index.html", "content": "<html><body>new</body></html>"},
+                        {"path": "styles/app.css", "content": "body{color:blue}"},
+                    ],
+                    "html_code": "<html><body>new preview</body></html>",
+                }
+            ),
+            content_type="application/json",
+            HTTP_HOST="localhost",
+        )
+        self.assertEqual(response.status_code, 200)
+        version.refresh_from_db()
+        history.refresh_from_db()
+        self.assertEqual(version.files[1]["content"], "body{color:blue}")
+        self.assertEqual(version.html_code, "<html><body>new preview</body></html>")
+        self.assertEqual(history.html_code, "<html><body>new preview</body></html>")
+        self.assertEqual(GenerateHistory.objects.get(pk=history.pk).versions.count(), 1)
+
+    def test_save_source_rejects_path_traversal(self):
+        history, version = self._project()
+        response = self.client.post(
+            f"/api/history/{history.id}/versions/{version.id}/source/",
+            data=json.dumps(
+                {
+                    "files": [{"path": "../evil.py", "content": "bad"}],
+                    "html_code": "<html></html>",
+                }
+            ),
+            content_type="application/json",
+            HTTP_HOST="localhost",
+        )
+        self.assertEqual(response.status_code, 400)
+
+
+class VersionTreeDataTests(TestCase):
+    def test_version_payload_includes_base_version(self):
+        history = GenerateHistory.objects.create(
+            prompt="tree test", html_code="<html></html>", project_type="frontend"
+        )
+        first = GenerateVersion.objects.create(
+            history=history, version_no=1, html_code="<html>v1</html>"
+        )
+        second = GenerateVersion.objects.create(
+            history=history,
+            version_no=2,
+            html_code="<html>v2</html>",
+            base_version=first,
+        )
+        response = self.client.get(
+            f"/api/history/{history.id}/", HTTP_HOST="localhost"
+        )
+        self.assertEqual(response.status_code, 200)
+        version = next(
+            item for item in response.json()["history"]["versions"]
+            if item["id"] == second.id
+        )
+        self.assertEqual(version["base_version_id"], first.id)
+        self.assertEqual(version["base_version_no"], 1)

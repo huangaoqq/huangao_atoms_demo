@@ -10,6 +10,11 @@ urlpatterns = [
     path("api/race/stats/", views.race_stats, name="race-stats"),
     path("api/history/", views.history_list, name="history-list"),
     path("api/history/<int:history_id>/", views.history_detail, name="history-detail"),
+    path(
+        "api/history/<int:history_id>/delete/",
+        views.delete_history,
+        name="history-delete",
+    ),
     path("api/generate/stream/", views.generate_stream, name="generate-stream"),
     path("api/jobs/start/", views.start_job, name="job-start"),
     path("api/jobs/", views.job_list, name="job-list"),
@@ -20,6 +25,11 @@ urlpatterns = [
         "api/history/<int:history_id>/versions/<int:version_id>/download/",
         views.download_version,
         name="download-version",
+    ),
+    path(
+        "api/history/<int:history_id>/versions/<int:version_id>/source/",
+        views.save_version_source,
+        name="save-version-source",
     ),
     path(
         "api/history/<int:history_id>/versions/<int:version_id>/delete/",

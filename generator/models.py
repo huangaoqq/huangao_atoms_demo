@@ -35,6 +35,14 @@ class GenerateVersion(models.Model):
     html_code = models.TextField(verbose_name="HTML代码")
     note = models.TextField(blank=True, verbose_name="版本说明")
     files = models.JSONField(default=list, blank=True, verbose_name="项目文件")
+    base_version = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="derived_versions",
+        verbose_name="基于版本",
+    )
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="创建时间")
 
     class Meta:
@@ -83,6 +91,7 @@ class GenerationJob(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     client_id = models.CharField(max_length=80, db_index=True, blank=True, verbose_name="浏览器标识")
     prompt = models.TextField(verbose_name="用户提示词")
+    reference_image = models.TextField(blank=True, default="", verbose_name="参考图片")
     requested_mode = models.CharField(max_length=20, default="single", verbose_name="请求模式")
     mode = models.CharField(max_length=20, blank=True, verbose_name="实际模式")
     status = models.CharField(max_length=20, default=STATUS_QUEUED, db_index=True, verbose_name="状态")

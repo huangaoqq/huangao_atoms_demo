@@ -222,6 +222,8 @@ QWEN_API_KEY=sk-sp-xxxxxxxxxxxxxxxxxxxxxxxx
 QWEN_BASE_URL=https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1
 QWEN_MODEL=qwen3.6-flash
 QWEN_TIMEOUT=60
+QWEN_VISION_MODEL=qwen3.8-flash
+QWEN_VISION_TIMEOUT=30
 BACKEND_TIMEOUT=90
 QWEN_BACKEND_TIMEOUT=180
 
